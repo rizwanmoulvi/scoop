@@ -1,90 +1,113 @@
-import { ethers, type Signer, type BrowserProvider } from 'ethers'
+/**
+ * Wallet module — sidebar proxy version.
+ *
+ * Extension sidebar pages (chrome-extension://...) are sandboxed; MetaMask does
+ * NOT inject window.ethereum into them. Only the content script, running inside
+ * the real Twitter page, has access to window.ethereum.
+ *
+ * Solution: every JSON-RPC call is sent via chrome.runtime.sendMessage to the
+ * background service worker, which forwards it to the active-tab content script,
+ * which executes window.ethereum.request(...) and sends the result back.
+ */
+import type { WalletSigner } from '../platforms/PredictionPlatform'
 
-declare global {
-  interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>
-      on: (event: string, handler: (...args: unknown[]) => void) => void
-      removeListener: (event: string, handler: (...args: unknown[]) => void) => void
-      isMetaMask?: boolean
+// ─── Low-level proxy ─────────────────────────────────────────────────────────
+
+/**
+ * Send a JSON-RPC request through the content-script proxy.
+ * Background worker forwards the message to the active tab.
+ */
+export function proxyRequest(method: string, params: unknown[] = []): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      { type: 'WALLET_REQUEST', method, params },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message))
+          return
+        }
+        if (response?.error) reject(new Error(response.error))
+        else resolve(response?.result)
+      }
+    )
+  })
+}
+
+// ─── WalletSigner proxy ───────────────────────────────────────────────────────
+
+/**
+ * Minimal signer that proxies signTypedData (EIP-712) through the content script.
+ * Compatible with PredictionPlatform.WalletSigner.
+ */
+export class ProxySigner implements WalletSigner {
+  constructor(public readonly address: string) {}
+
+  async getAddress(): Promise<string> {
+    return this.address
+  }
+
+  async signTypedData(
+    domain: Record<string, unknown>,
+    types: Record<string, Array<{ name: string; type: string }>>,
+    value: Record<string, unknown>
+  ): Promise<string> {
+    // eth_signTypedData_v4 payload (EIP-712 JSON format)
+    const typedData = {
+      types: {
+        EIP712Domain: [
+          { name: 'name', type: 'string' },
+          { name: 'version', type: 'string' },
+          { name: 'chainId', type: 'uint256' },
+          { name: 'verifyingContract', type: 'address' },
+        ],
+        ...types,
+      },
+      primaryType: Object.keys(types)[0],
+      domain,
+      message: value,
     }
+
+    // BigInt cannot be JSON-serialised; convert to decimal strings
+    const json = JSON.stringify(typedData, (_key, val) =>
+      typeof val === 'bigint' ? val.toString() : val
+    )
+
+    return proxyRequest('eth_signTypedData_v4', [this.address, json]) as Promise<string>
   }
 }
 
+// ─── High-level helpers ───────────────────────────────────────────────────────
+
 export interface ConnectedWallet {
-  provider: BrowserProvider
-  signer: Signer
+  signer: WalletSigner
   address: string
   chainId: number
 }
 
 /**
- * Returns true if MetaMask (or compatible wallet) is available.
- */
-export function isWalletAvailable(): boolean {
-  return typeof window !== 'undefined' && typeof window.ethereum !== 'undefined'
-}
-
-/**
- * Request wallet connection via MetaMask.
- * Returns the connected wallet details.
+ * Request wallet connection.
+ * Returns connected wallet info with a ProxySigner.
  */
 export async function connectWallet(): Promise<ConnectedWallet> {
-  if (!isWalletAvailable()) {
-    throw new Error('MetaMask is not installed. Please install it from metamask.io')
-  }
+  const accounts = (await proxyRequest('eth_requestAccounts', [])) as string[]
+  if (!accounts || accounts.length === 0) throw new Error('No accounts returned')
 
-  const provider = new ethers.BrowserProvider(window.ethereum!)
-  await provider.send('eth_requestAccounts', [])
+  const address = accounts[0]
 
-  const signer = await provider.getSigner()
-  const address = await signer.getAddress()
-  const network = await provider.getNetwork()
-  const chainId = Number(network.chainId)
+  const chainIdHex = (await proxyRequest('eth_chainId', [])) as string
+  const chainId = parseInt(chainIdHex, 16)
 
-  return { provider, signer, address, chainId }
+  return { signer: new ProxySigner(address), address, chainId }
 }
 
 /**
- * Get the currently connected accounts without requesting a new connection.
+ * Get currently connected accounts without a permission prompt.
  */
 export async function getConnectedAccounts(): Promise<string[]> {
-  if (!isWalletAvailable()) return []
-
   try {
-    const accounts = (await window.ethereum!.request({
-      method: 'eth_accounts',
-    })) as string[]
-    return accounts
+    return (await proxyRequest('eth_accounts', [])) as string[]
   } catch {
     return []
-  }
-}
-
-/**
- * Register listeners for account and chain changes.
- */
-export function watchWalletEvents(
-  onAccountsChanged: (accounts: string[]) => void,
-  onChainChanged: (chainId: number) => void
-): () => void {
-  if (!isWalletAvailable()) return () => {}
-
-  const handleAccountsChanged = (...args: unknown[]) => {
-    onAccountsChanged(args[0] as string[])
-  }
-
-  const handleChainChanged = (...args: unknown[]) => {
-    const hexChainId = args[0] as string
-    onChainChanged(parseInt(hexChainId, 16))
-  }
-
-  window.ethereum!.on('accountsChanged', handleAccountsChanged)
-  window.ethereum!.on('chainChanged', handleChainChanged)
-
-  return () => {
-    window.ethereum!.removeListener('accountsChanged', handleAccountsChanged)
-    window.ethereum!.removeListener('chainChanged', handleChainChanged)
   }
 }
 
@@ -93,4 +116,41 @@ export function watchWalletEvents(
  */
 export function shortenAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`
+}
+
+/**
+ * Watch for account / chain changes.
+ * NOTE: event subscriptions (eth_subscribe) don't work through the proxy.
+ * Instead we poll on a short interval.
+ */
+export function watchWalletEvents(
+  onAccountsChanged: (accounts: string[]) => void,
+  onChainChanged: (chainId: number) => void
+): () => void {
+  let lastAddress = ''
+  let lastChain = 0
+
+  const id = setInterval(async () => {
+    try {
+      const accounts = (await proxyRequest('eth_accounts', [])) as string[]
+      const addr = accounts[0] ?? ''
+      if (addr !== lastAddress) {
+        lastAddress = addr
+        onAccountsChanged(accounts)
+      }
+
+      const hexChain = (await proxyRequest('eth_chainId', [])) as string
+      const chain = parseInt(hexChain, 16)
+      if (chain !== lastChain && lastChain !== 0) {
+        lastChain = chain
+        onChainChanged(chain)
+      } else {
+        lastChain = chain
+      }
+    } catch {
+      // silently ignore if proxy not reachable
+    }
+  }, 2000)
+
+  return () => clearInterval(id)
 }

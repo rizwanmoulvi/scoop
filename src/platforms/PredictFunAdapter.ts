@@ -1,7 +1,6 @@
-import type { Signer } from 'ethers'
 import type { Market, OrderBook } from '../types/market'
 import type { ApiResponse, Order, SignedOrder, TradeInput } from '../types/order'
-import type { PredictionPlatform } from './PredictionPlatform'
+import type { PredictionPlatform, WalletSigner } from './PredictionPlatform'
 
 /**
  * Predict.fun adapter.
@@ -92,7 +91,7 @@ export class PredictFunAdapter implements PredictionPlatform {
     }
   }
 
-  async signOrder(order: Order, signer: Signer): Promise<SignedOrder> {
+  async signOrder(order: Order, signer: WalletSigner): Promise<SignedOrder> {
     const value = {
       conditionId: order.marketId,
       outcomeIndex: order.outcome === 'YES' ? BigInt(0) : BigInt(1),
@@ -106,7 +105,7 @@ export class PredictFunAdapter implements PredictionPlatform {
     return { ...order, signature, signedAt: Math.floor(Date.now() / 1000) }
   }
 
-  async submitOrder(order: SignedOrder, _signer: Signer): Promise<ApiResponse> {
+  async submitOrder(order: SignedOrder, _signer: WalletSigner): Promise<ApiResponse> {
     const res = await fetch(`${this.baseUrl}/orders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

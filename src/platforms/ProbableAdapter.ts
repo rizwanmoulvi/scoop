@@ -1,7 +1,6 @@
-import type { Signer } from 'ethers'
 import type { Market, OrderBook } from '../types/market'
 import type { ApiResponse, Order, SignedOrder, TradeInput } from '../types/order'
-import type { PredictionPlatform } from './PredictionPlatform'
+import type { PredictionPlatform, WalletSigner } from './PredictionPlatform'
 
 /**
  * Probable.markets adapter (PRIMARY integration).
@@ -96,7 +95,7 @@ export class ProbableAdapter implements PredictionPlatform {
     }
   }
 
-  async signOrder(order: Order, signer: Signer): Promise<SignedOrder> {
+  async signOrder(order: Order, signer: WalletSigner): Promise<SignedOrder> {
     const value = {
       marketId: order.marketId,
       outcome: order.outcome,
@@ -115,7 +114,7 @@ export class ProbableAdapter implements PredictionPlatform {
     }
   }
 
-  async submitOrder(order: SignedOrder, _signer: Signer): Promise<ApiResponse> {
+  async submitOrder(order: SignedOrder, _signer: WalletSigner): Promise<ApiResponse> {
     const body = {
       marketId: order.marketId,
       outcome: order.outcome,

@@ -1,89 +1,95 @@
 /**
- * Scoop Content Script
+ * Scoop Content Script — runs in ISOLATED world (default).
  *
- * Runs on twitter.com / x.com.
- * Observes DOM mutations to detect prediction market mentions inside tweets
- * and injects an inline "Bet" button into the tweet's action bar
- * (alongside Like / Retweet / Reply / Share).
+ * Isolated world gives access to chrome.runtime APIs.
+ * window.ethereum is NOT available here; the separate ethereumBridge.ts
+ * (MAIN world) handles that and communicates via window.postMessage.
  *
- * Detection covers:
- *  - Full URLs:      https://probable.markets/abc123
- *  - Bare domains:   probable.markets/abc123
- *  - Spoken forms:   probabledotmarket  /  probable dot markets
+ * Responsibilities:
+ *  1. Detect prediction market mentions in tweets and inject Bet buttons.
+ *  2. On Bet click → send OPEN_PANEL to background (opens popup window).
+ *  3. Handle WALLET_REQUEST from background →
+ *       postMessage to MAIN world bridge → get result → reply to background.
  */
 import type { DetectedMarket } from '../types/market'
 import { detectMarketInTweet } from './domObserver'
 import { injectBetButton, injectStyles } from './injectButton'
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+// ─── Wallet Proxy via postMessage Bridge ─────────────────────────────────────
 
 /**
- * CSS selectors for tweet article containers on Twitter/X.
- * Multiple selectors for resilience against layout changes.
+ * Forward a JSON-RPC wallet call to the MAIN world bridge and await the result.
+ * Each call gets a unique id to match the async response.
  */
-const TWEET_SELECTOR = 'article[data-testid="tweet"]'
+function callBridge(method: string, params: unknown[]): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const id = `scoop-${Date.now()}-${Math.random().toString(36).slice(2)}`
 
-// ─── Core Logic ──────────────────────────────────────────────────────────────
+    const handler = (event: MessageEvent) => {
+      if (event.source !== window) return
+      const data = event.data
+      if (!data || data.__scoop_res !== true || data.id !== id) return
 
-/**
- * Scan a root element for tweet articles and inject Bet buttons
- * for any prediction market mentions found.
- */
-function scanForMarkets(root: Element | Document = document): void {
-  const tweets = Array.from(root.querySelectorAll<Element>(TWEET_SELECTOR))
-
-  // Also handle the case where root itself is a tweet article
-  if (root instanceof Element && root.matches(TWEET_SELECTOR)) {
-    tweets.unshift(root)
-  }
-
-  for (const tweet of tweets) {
-    const market = detectMarketInTweet(tweet)
-    if (market) {
-      injectBetButton(tweet, market, handleBetClick)
+      window.removeEventListener('message', handler)
+      if (data.error) reject(new Error(data.error))
+      else resolve(data.result)
     }
-  }
-}
 
-/**
- * Called when a user clicks a Bet button.
- * Sends a message to the background SW to open/focus the sidebar.
- */
-function handleBetClick(market: DetectedMarket): void {
-  console.log('[Scoop] Bet clicked:', market)
-
-  chrome.runtime.sendMessage({
-    type: 'OPEN_SIDEBAR',
-    payload: market,
+    window.addEventListener('message', handler)
+    window.postMessage({ __scoop: true, id, method, params }, '*')
   })
 }
 
-// ─── MutationObserver ────────────────────────────────────────────────────────
+// Listen for WALLET_REQUEST messages from the background service worker
+// and proxy them to the MAIN world ethereum bridge.
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type !== 'WALLET_REQUEST') return false
+
+  callBridge(message.method, message.params ?? [])
+    .then((result) => sendResponse({ result }))
+    .catch((err: unknown) => sendResponse({ error: err instanceof Error ? err.message : String(err) }))
+
+  return true // keep channel open for async response
+})
+
+// ─── Market Detection ─────────────────────────────────────────────────────────
+
+const TWEET_SELECTOR = 'article[data-testid="tweet"]'
+
+function scanForMarkets(root: Element | Document = document): void {
+  const tweets = Array.from(root.querySelectorAll<Element>(TWEET_SELECTOR))
+  if (root instanceof Element && root.matches(TWEET_SELECTOR)) tweets.unshift(root)
+
+  for (const tweet of tweets) {
+    const market = detectMarketInTweet(tweet)
+    if (market) injectBetButton(tweet, market, handleBetClick)
+  }
+}
+
+function handleBetClick(market: DetectedMarket): void {
+  console.log('[Scoop] Bet clicked:', market)
+  // Ask the background worker to open the popup window and store the market
+  chrome.runtime.sendMessage({ type: 'OPEN_PANEL', payload: market })
+}
+
+// ─── MutationObserver ─────────────────────────────────────────────────────────
 
 let observer: MutationObserver | null = null
 
 function startObserver(): void {
   if (observer) return
-
   observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       for (const node of Array.from(mutation.addedNodes)) {
-        if (node instanceof Element) {
-          scanForMarkets(node)
-        }
+        if (node instanceof Element) scanForMarkets(node)
       }
     }
   })
-
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-  })
-
+  observer.observe(document.body, { childList: true, subtree: true })
   console.log('[Scoop] MutationObserver started')
 }
 
-// ─── Init ────────────────────────────────────────────────────────────────────
+// ─── Init ─────────────────────────────────────────────────────────────────────
 
 function init(): void {
   injectStyles()

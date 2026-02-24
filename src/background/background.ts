@@ -2,111 +2,101 @@
  * Scoop Background Service Worker
  *
  * Responsibilities:
- * - Handle messages from content script and sidebar
- * - Persist active market selection across sidebar open/close
- * - Open/focus the Chrome side panel when a Bet button is clicked
- * - Route messages between content script and sidebar
+ *  - OPEN_PANEL: store the clicked market in session storage and open a popup
+ *    window (like a bank OTP window) that hosts the full betting UI.
+ *  - WALLET_REQUEST: proxy JSON-RPC wallet calls from the popup back to the
+ *    content script that has access to window.ethereum (via postMessage bridge).
  */
 import type { DetectedMarket } from '../types/market'
-import type { BackgroundMessage } from './messageRouter'
 
-// ─── State ───────────────────────────────────────────────────────────────────
+// Track the active Twitter tab so we know where to forward wallet requests.
+let activeTabId: number | null = null
 
-/** Currently detected/active market (persisted in session storage) */
-let activeMarket: DetectedMarket | null = null
+// Popup window id — reuse if already open
+let popupWindowId: number | null = null
 
-// ─── Side Panel ──────────────────────────────────────────────────────────────
+// ─── Popup ────────────────────────────────────────────────────────────────────
 
-/**
- * Set the panel path globally once so every subsequent open() call
- * doesn't need to call setOptions (which adds async overhead and can
- * cause Chrome to drop the user-gesture context before open() fires).
- */
-function initSidePanel(): void {
-  chrome.sidePanel
-    .setOptions({ path: 'src/sidebar/index.html', enabled: true })
-    .catch((e) => console.error('[Scoop BG] setOptions failed:', e))
+const PANEL_URL = chrome.runtime.getURL('src/panel/index.html')
+const POPUP_WIDTH = 420
+const POPUP_HEIGHT = 680
+
+async function openPopup(): Promise<void> {
+  // If popup is already open, focus it
+  if (popupWindowId !== null) {
+    try {
+      await chrome.windows.update(popupWindowId, { focused: true })
+      return
+    } catch {
+      // Window was closed externally
+      popupWindowId = null
+    }
+  }
+
+  const win = await chrome.windows.create({
+    url: PANEL_URL,
+    type: 'popup',
+    width: POPUP_WIDTH,
+    height: POPUP_HEIGHT,
+    focused: true,
+  })
+
+  popupWindowId = win.id ?? null
 }
 
-/**
- * Open the side panel.
- * chrome.sidePanel.open() requires windowId (not tabId).
- */
-async function openSidePanel(windowId: number): Promise<void> {
-  await chrome.sidePanel.open({ windowId })
-}
+// Clean up when the popup is manually closed
+chrome.windows.onRemoved.addListener((windowId) => {
+  if (windowId === popupWindowId) popupWindowId = null
+})
 
-// ─── Message Handling ────────────────────────────────────────────────────────
+// ─── Message Handling ─────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener(
-  (message: BackgroundMessage, sender, sendResponse) => {
+  (message: { type: string; payload?: DetectedMarket; method?: string; params?: unknown[] }, sender, sendResponse) => {
     switch (message.type) {
-      case 'OPEN_SIDEBAR': {
-        const market = message.payload
-        activeMarket = market
-        chrome.storage.session.set({ activeMarket: market })
-
-        // windowId is required by chrome.sidePanel.open() — tabId alone won't work
-        const windowId = sender.tab?.windowId
-        if (windowId !== undefined) {
-          openSidePanel(windowId)
+      // Content script notifies us a Bet button was clicked
+      case 'OPEN_PANEL': {
+        activeTabId = sender.tab?.id ?? activeTabId
+        // Store market so the popup can read it from session storage
+        chrome.storage.session.set({ activeMarket: message.payload }, () => {
+          openPopup()
             .then(() => sendResponse({ ok: true }))
-            .catch((err) => {
-              console.error('[Scoop BG] sidePanel.open failed:', err)
-              sendResponse({ ok: false, error: String(err) })
-            })
-          return true // keep channel open for async response
+            .catch((err: unknown) => sendResponse({ ok: false, error: String(err) }))
+        })
+        return true // async
+      }
+
+      // Popup panel requests a wallet JSON-RPC call; forward to the Twitter tab
+      case 'WALLET_REQUEST': {
+        if (activeTabId === null) {
+          sendResponse({ error: 'No active Twitter tab. Click a Bet button first.' })
+          return false
         }
-
-        sendResponse({ ok: true })
-        break
-      }
-
-      case 'GET_ACTIVE_MARKET': {
-        sendResponse({ ok: true, market: activeMarket })
-        break
-      }
-
-      case 'SET_ACTIVE_MARKET': {
-        activeMarket = message.payload
-        chrome.storage.session.set({ activeMarket })
-        sendResponse({ ok: true })
-        break
-      }
-
-      case 'CLEAR_ACTIVE_MARKET': {
-        activeMarket = null
-        chrome.storage.session.remove('activeMarket')
-        sendResponse({ ok: true })
-        break
+        chrome.tabs.sendMessage(
+          activeTabId,
+          { type: 'WALLET_REQUEST', method: message.method, params: message.params },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              sendResponse({ error: chrome.runtime.lastError.message })
+            } else {
+              sendResponse(response)
+            }
+          }
+        )
+        return true // async
       }
 
       default:
         sendResponse({ ok: false, error: 'Unknown message type' })
+        return false
     }
-
-    // Return true to indicate async response (required for chrome.runtime.onMessage)
-    return true
   }
 )
 
-// ─── Extension Action Click ──────────────────────────────────────────────────
-
-/** Clicking the extension icon also opens the side panel */
-chrome.action.onClicked.addListener(async (tab) => {
-  if (tab.windowId === undefined) return
-  await openSidePanel(tab.windowId)
-})
-
-// ─── Install / Update ────────────────────────────────────────────────────────
+// ─── Install ──────────────────────────────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(({ reason }) => {
   console.log(`[Scoop BG] Extension ${reason}`)
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error)
-  initSidePanel()
 })
-
-// Set panel path on every service worker start (not just first install)
-initSidePanel()
 
 console.log('[Scoop BG] Background service worker started')

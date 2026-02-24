@@ -22,6 +22,17 @@ function useActiveMarket() {
   useEffect(() => {
     const loadMarket = async (detected: DetectedMarket) => {
       setDetectedMarket(detected)
+
+      // '_platform' means the tweet mentioned the platform name (e.g. "probabledotmarket")
+      // but contained no specific market ID — nothing to fetch.
+      if (detected.marketId === '_platform') {
+        setMarket(null)
+        setOrderBook(null)
+        setLoadingMarket(false)
+        setMarketError(null)
+        return
+      }
+
       setLoadingMarket(true)
       setMarketError(null)
       setMarket(null)
@@ -89,7 +100,8 @@ export function App() {
 
   const { detectedMarket, order, wallet } = useStore()
   const showEmptyState = !detectedMarket
-  const showOrderForm = detectedMarket && wallet.address && order.status !== 'success'
+  const hasRealMarket = detectedMarket && detectedMarket.marketId !== '_platform'
+  const showOrderForm = hasRealMarket && wallet.address && order.status !== 'success'
 
   return (
     <div className="flex flex-col h-full bg-[#0f1117]">

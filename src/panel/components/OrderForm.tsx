@@ -81,7 +81,6 @@ export function OrderForm() {
     try {
       const adapter = getAdapter(detectedMarket.platform)
 
-      // Build order
       const tradeInput = {
         marketId: detectedMarket.marketId,
         platform: detectedMarket.platform,
@@ -95,17 +94,14 @@ export function OrderForm() {
       const unsignedOrder = adapter.buildOrder(tradeInput)
 
       // Use stored address to build signer (avoids re-prompting MetaMask).
-      // Falls back to full connectWallet() if address somehow lost.
       setOrder({ status: 'signing' })
       const signer = wallet.address
         ? new ProxySigner(wallet.address)
         : (await connectWallet()).signer
 
-      // Sign
       const signedOrder = await adapter.signOrder(unsignedOrder, signer)
       setOrder({ signedOrder, status: 'submitting' })
 
-      // Submit
       const response = await adapter.submitOrder(signedOrder, signer)
       setOrder({ response, status: response.success ? 'success' : 'error', error: response.message })
     } catch (err: unknown) {
