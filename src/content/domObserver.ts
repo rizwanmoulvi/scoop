@@ -1,5 +1,13 @@
 import type { DetectedMarket, Platform } from '../types/market'
 
+// ─── Scoop Bot Hashtag ───────────────────────────────────────────────────────
+// When our bot posts a market it embeds #ScoopBet_mkt_{slug_with_underscores}.
+// X hashtags stop at hyphens, so the bot converts slug hyphens → underscores.
+// The extension converts back: underscores → hyphens to get the real market slug.
+// e.g. tweet:     #ScoopBet_mkt_will_satoshi_move_any_bitcoin_in_2026
+//      marketId:  will-satoshi-move-any-bitcoin-in-2026
+const SCOOP_HASHTAG_REGEX = /#ScoopBet_mkt_([A-Za-z0-9_]+)/i
+
 // ─── Detection Rules ─────────────────────────────────────────────────────────
 
 interface PatternRule {
@@ -54,7 +62,13 @@ export function parseMarketMentions(text: string): DetectedMarket[] {
     let match: RegExpExecArray | null
     while ((match = regex.exec(text)) !== null) {
       const marketId = match[1] ?? '_platform'
-      const url = marketId !== '_platform' ? `${baseUrl}/${marketId}` : baseUrl
+      // Probable markets live at /event/{slug}
+      const url =
+        marketId !== '_platform'
+          ? platform === 'probable'
+            ? `${baseUrl}/event/${marketId}`
+            : `${baseUrl}/${marketId}`
+          : baseUrl
 
       if (!markets.find((m) => m.marketId === marketId && m.platform === platform)) {
         markets.push({ platform, marketId, url })
@@ -75,7 +89,26 @@ export function parseMarketMentions(text: string): DetectedMarket[] {
  * Returns only the first match (one Bet button per tweet).
  */
 export function detectMarketInTweet(tweetEl: Element): DetectedMarket | null {
-  // 1. Check anchor hrefs first — they often carry the real resolved URL
+  const tweetText =
+    tweetEl.querySelector('[data-testid="tweetText"]')?.textContent ??
+    tweetEl.textContent ?? ''
+
+  // 0. Highest priority: #ScoopBet_mkt_{id} hashtag from our bot.
+  //    Gives an exact Probable market ID with zero ambiguity,
+  //    even when X strips plain URLs from posts.
+  const hashtagMatch = SCOOP_HASHTAG_REGEX.exec(tweetText)
+  if (hashtagMatch) {
+    // Underscores in the hashtag are hyphens in the real slug
+    const marketId = hashtagMatch[1].replace(/_/g, '-')
+    return {
+      platform: 'probable',
+      marketId,
+      url: `https://probable.markets/event/${marketId}`,
+      sourceTweetElement: tweetEl,
+    }
+  }
+
+  // 1. Check anchor hrefs — they carry the resolved URL
   const anchors = Array.from(tweetEl.querySelectorAll<HTMLAnchorElement>('a[href]'))
   for (const anchor of anchors) {
     const href = anchor.href || anchor.getAttribute('href') || ''
@@ -83,10 +116,8 @@ export function detectMarketInTweet(tweetEl: Element): DetectedMarket | null {
     if (found.length) return { ...found[0], sourceTweetElement: tweetEl }
   }
 
-  // 2. Fall back to visible tweet text
-  const textEl = tweetEl.querySelector('[data-testid="tweetText"]')
-  const text = textEl?.textContent ?? tweetEl.textContent ?? ''
-  const found = parseMarketMentions(text)
+  // 2. Fall back to visible tweet text (spoken forms / bare domains)
+  const found = parseMarketMentions(tweetText)
   if (found.length) return { ...found[0], sourceTweetElement: tweetEl }
 
   return null

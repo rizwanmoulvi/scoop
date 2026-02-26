@@ -9,6 +9,13 @@
  */
 import type { DetectedMarket } from '../types/market'
 
+type AnyMessage = {
+  type: string
+  payload?: unknown
+  method?: string
+  params?: unknown[]
+}
+
 // Track the active Twitter tab so we know where to forward wallet requests.
 let activeTabId: number | null = null
 
@@ -52,13 +59,13 @@ chrome.windows.onRemoved.addListener((windowId) => {
 // ─── Message Handling ─────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener(
-  (message: { type: string; payload?: DetectedMarket; method?: string; params?: unknown[] }, sender, sendResponse) => {
+  (message: AnyMessage, sender, sendResponse) => {
     switch (message.type) {
       // Content script notifies us a Bet button was clicked
       case 'OPEN_PANEL': {
         activeTabId = sender.tab?.id ?? activeTabId
         // Store market so the popup can read it from session storage
-        chrome.storage.session.set({ activeMarket: message.payload }, () => {
+        chrome.storage.session.set({ activeMarket: message.payload as DetectedMarket }, () => {
           openPopup()
             .then(() => sendResponse({ ok: true }))
             .catch((err: unknown) => sendResponse({ ok: false, error: String(err) }))
@@ -72,9 +79,10 @@ chrome.runtime.onMessage.addListener(
           sendResponse({ error: 'No active Twitter tab. Click a Bet button first.' })
           return false
         }
+        const walletMsg = message as { type: string; method?: string; params?: unknown[] }
         chrome.tabs.sendMessage(
           activeTabId,
-          { type: 'WALLET_REQUEST', method: message.method, params: message.params },
+          { type: 'WALLET_REQUEST', method: walletMsg.method, params: walletMsg.params },
           (response) => {
             if (chrome.runtime.lastError) {
               sendResponse({ error: chrome.runtime.lastError.message })
@@ -83,6 +91,28 @@ chrome.runtime.onMessage.addListener(
             }
           }
         )
+        return true // async
+      }
+
+      // Panel requests an external API fetch. The background worker is not
+      // subject to CORS, so we proxy all cross-origin requests through here.
+      case 'API_FETCH': {
+        const { url, method = 'GET', headers = {}, body } = message.payload as {
+          url: string; method?: string; headers?: Record<string, string>; body?: string
+        }
+
+        console.log(`[Scoop BG] API_FETCH ${method} ${url}`)
+        fetch(url, { method, headers: { 'Content-Type': 'application/json', ...headers }, body })
+          .then(async (res) => {
+            const data = await res.json().catch(() => null)
+            if (!res.ok) console.warn(`[Scoop BG] API_FETCH ${res.status} ${url}`, data)
+            sendResponse({ ok: res.ok, status: res.status, data })
+          })
+          .catch((err: unknown) => {
+            console.error(`[Scoop BG] API_FETCH failed ${url}`, err)
+            sendResponse({ ok: false, status: 0, error: String(err) })
+          })
+
         return true // async
       }
 

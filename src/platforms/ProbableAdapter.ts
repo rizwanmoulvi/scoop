@@ -1,148 +1,417 @@
 import type { Market, OrderBook } from '../types/market'
 import type { ApiResponse, Order, SignedOrder, TradeInput } from '../types/order'
 import type { PredictionPlatform, WalletSigner } from './PredictionPlatform'
+import { apiFetch } from '../utils/apiFetch'
 
 /**
- * Probable.markets adapter (PRIMARY integration).
+ * Probable.markets adapter.
  *
- * Probable uses a CLOB architecture with:
- * - Off-chain orderbook
- * - On-chain settlement on BNB Chain
- * - EIP-712 signed orders
+ * Two separate API services (see developer.probable.markets):
  *
- * API base: https://probable.markets/api  (schema reverse-engineered from DevTools)
+ * ┌─ Market Public API ──────────────────────────────────────────────────────┐
+ * │ Base: https://market-api.probable.markets                                │
+ * │ Auth: none (fully public, Redis-cached)                                  │
+ * │ GET /public/api/v1/events/slug/{slug}  → event + embedded markets array │
+ * │ GET /public/api/v1/markets/{id}        → single market by numeric ID    │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ Orderbook API ──────────────────────────────────────────────────────────┐
+ * │ Base: https://api.probable.markets                                       │
+ * │ GET  /public/api/v1/midpoint?token_id={clobTokenId}   → { mid: "0.62" } │
+ * │ GET  /public/api/v1/book?token_id={clobTokenId}       → bids/asks       │
+ * │ POST /public/api/v1/order/{chainId}   (L2 HMAC auth required)           │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Key facts:
+ * - Markets have a numeric ID (e.g. 513) AND a human-readable market_slug.
+ * - The URL slug used on the site is the *event* slug (not market_slug).
+ * - clobTokenIds[0] = YES token,  clobTokenIds[1] = NO token.
+ * - EIP-712 domain: "Probable CTF Exchange" on BSC mainnet (chainId 56).
+ * - signatureType = 0 (EOA direct) or 1 (PROB_GNOSIS_SAFE proxy wallet).
+ *
+ * Contract addresses (BSC mainnet):
+ *   CTF_EXCHANGE_ADDRESS = 0xF99F5367ce708c66F0860B77B4331301A5597c86
  */
+
+const CTF_EXCHANGE_ADDRESS = '0xF99F5367ce708c66F0860B77B4331301A5597c86'
+const BSC_CHAIN_ID = 56
+
+// ─── API response shapes ──────────────────────────────────────────────────────
+
+interface ProbableMarketResponse {
+  id: number | string
+  condition_id: string
+  question: string
+  description?: string
+  market_slug: string
+  /** May arrive as a JSON string e.g. `"[\"Yes\",\"No\"]"` */
+  outcomes: string[] | string
+  /** May arrive as a JSON string e.g. `"[\"598...\",\"948...\"]"` */
+  clobTokenIds: string[] | string
+  /** Already-parsed token list — reliable fallback for clobTokenIds */
+  tokens?: Array<{ token_id: string; outcome: string }>
+  active: boolean
+  closed: boolean
+  archived?: boolean
+  volume?: number
+  volume24hr?: string
+  liquidity?: number | string
+  event?: { id: number; slug: string; title: string }
+}
+
+interface ProbableEventResponse {
+  id: number
+  slug: string
+  title: string
+  description?: string
+  status: string
+  markets: ProbableMarketResponse[]
+  volume?: number
+}
+
+interface MidpointResponse { mid: string }
+
+interface BookLevel { price: string; size: string }
+interface BookResponse {
+  market: string
+  asset_id: string
+  bids: BookLevel[]
+  asks: BookLevel[]
+}
+
+// ─── Adapter ──────────────────────────────────────────────────────────────────
+
 export class ProbableAdapter implements PredictionPlatform {
   readonly name = 'Probable'
 
-  private readonly baseUrl = 'https://probable.markets/api'
+  private readonly marketApiBase = 'https://market-api.probable.markets/public/api/v1'
+  private readonly orderbookApiBase = 'https://api.probable.markets/public/api/v1'
 
-  // ─── EIP-712 Domain ──────────────────────────────────────────────────────────
+  // ── EIP-712 domain + types ─────────────────────────────────────────────────
 
   private get domain() {
     return {
-      name: 'Probable',
+      name: 'Probable CTF Exchange',
       version: '1',
-      // BNB Chain mainnet chainId = 56, testnet = 97
-      chainId: 56,
-      verifyingContract: '0x0000000000000000000000000000000000000000', // TODO: replace with real contract
+      chainId: BSC_CHAIN_ID,
+      verifyingContract: CTF_EXCHANGE_ADDRESS,
     }
   }
 
   private get orderTypes() {
     return {
       Order: [
-        { name: 'marketId', type: 'string' },
-        { name: 'outcome', type: 'string' },
-        { name: 'price', type: 'uint256' },
-        { name: 'amount', type: 'uint256' },
-        { name: 'expiration', type: 'uint256' },
-        { name: 'maker', type: 'address' },
+        { name: 'salt',          type: 'uint256' },
+        { name: 'maker',         type: 'address' },
+        { name: 'signer',        type: 'address' },
+        { name: 'taker',         type: 'address' },
+        { name: 'tokenId',       type: 'uint256' },
+        { name: 'makerAmount',   type: 'uint256' },
+        { name: 'takerAmount',   type: 'uint256' },
+        { name: 'expiration',    type: 'uint256' },
+        { name: 'nonce',         type: 'uint256' },
+        { name: 'feeRateBps',    type: 'uint256' },
+        { name: 'side',          type: 'uint8'   },
+        { name: 'signatureType', type: 'uint8'   },
       ],
     }
   }
 
-  // ─── API Methods ─────────────────────────────────────────────────────────────
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
-  async getMarket(id: string): Promise<Market> {
-    const res = await fetch(`${this.baseUrl}/markets/${id}`)
-    if (!res.ok) throw new Error(`Probable: failed to fetch market ${id}: ${res.status}`)
-    const data = await res.json()
+  private toMarket(data: ProbableMarketResponse, mid: number | null, tokenIds?: string[]): Market {
+    // clobTokenIds arrives as a JSON-encoded string from the API — parse if not pre-parsed.
+    const resolvedTokenIds: string[] = tokenIds ?? (() => {
+      const raw = data.clobTokenIds
+      if (Array.isArray(raw)) return raw
+      if (typeof raw === 'string') { try { return JSON.parse(raw) as string[] } catch { /* fall */ } }
+      return (data.tokens ?? []).map((t) => t.token_id)
+    })()
 
     return {
-      id: data.id ?? id,
+      id: data.market_slug,
+      numericId: Number(data.id),
+      clobTokenIds: resolvedTokenIds,
       platform: 'probable',
-      title: data.title ?? data.question ?? 'Unknown Market',
+      title: data.question,
       description: data.description,
-      probability: data.probability ?? data.yesPrice ?? 0.5,
-      volume: data.volume ?? '0',
-      status: data.status ?? 'open',
-      resolutionDate: data.resolutionDate ?? data.endDate,
-      url: `https://probable.markets/${id}`,
+      probability: mid !== null && !isNaN(mid) ? mid : 0.5,
+      volume: String(data.volume ?? data.volume24hr ?? 0),
+      status: data.active && !data.closed ? 'open' : 'closed',
+      url: `https://probable.markets/event/${data.event?.slug ?? data.market_slug}`,
     }
   }
 
-  async getOrderBook(id: string): Promise<OrderBook> {
-    const res = await fetch(`${this.baseUrl}/markets/${id}/orderbook`)
-    if (!res.ok) throw new Error(`Probable: failed to fetch orderbook for ${id}: ${res.status}`)
-    const data = await res.json()
+  // ── Public API ─────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch market by event slug (e.g. "will-satoshi-move-any-bitcoin-in-2026").
+   * Calls GET /events/slug/{slug} then enriches with YES midpoint price.
+   */
+  async getMarket(slug: string): Promise<Market> {
+    const event = await apiFetch<ProbableEventResponse>(
+      `${this.marketApiBase}/events/slug/${encodeURIComponent(slug)}`
+    )
+    if (!event.markets || event.markets.length === 0) {
+      throw new Error(`Probable: event "${slug}" has no markets`)
+    }
+
+    // Prefer first active market, else fall back to index 0
+    const marketData =
+      event.markets.find((m) => m.active && !m.closed) ?? event.markets[0]
+
+    // Parse clobTokenIds now — the API returns it as a JSON-encoded string
+    // e.g. "[\"598...\",\"948...\"]" so we must parse before any token ID use.
+    const parsedTokenIds: string[] = (() => {
+      const raw = marketData.clobTokenIds
+      if (Array.isArray(raw)) return raw
+      if (typeof raw === 'string') { try { return JSON.parse(raw) as string[] } catch { /* fall */ } }
+      // last resort: .tokens[] array is always a real array
+      return (marketData.tokens ?? []).map((t) => t.token_id)
+    })()
+
+    // Fetch YES midpoint price using the correctly-parsed token ID
+    let mid: number | null = null
+    const yesTokenId = parsedTokenIds[0]
+    if (yesTokenId) {
+      try {
+        const midData = await apiFetch<MidpointResponse>(
+          `${this.orderbookApiBase}/midpoint?token_id=${encodeURIComponent(yesTokenId)}`
+        )
+        const parsed = parseFloat(midData.mid)
+        if (!isNaN(parsed) && parsed > 0) mid = parsed
+      } catch (e) {
+        console.warn('[Probable] midpoint fetch failed:', e)
+        // non-fatal — probability will fall back to 0.5
+      }
+    } else {
+      console.warn('[Probable] no clobTokenIds in market response — cannot fetch midpoint price')
+    }
+
+    return this.toMarket(marketData, mid, parsedTokenIds)
+  }
+
+  /**
+   * Fetch full orderbook for a market.
+   * Pass `clobTokenIds` from a previously-fetched Market to avoid a redundant
+   * /events/slug call.
+   */
+  async getOrderBook(id: string, clobTokenIds?: string[]): Promise<OrderBook> {
+    let tokenIds = clobTokenIds
+    if (!tokenIds || tokenIds.length < 2) {
+      // clobTokenIds not passed — fetch market to get them
+      console.warn('[Probable] getOrderBook called without clobTokenIds, fetching market...')
+      const market = await this.getMarket(id)
+      tokenIds = market.clobTokenIds ?? []
+    }
+
+    if (!tokenIds || tokenIds.length < 2) {
+      throw new Error(`[Probable] market "${id}" has no clobTokenIds — cannot fetch orderbook`)
+    }
+
+    const [yesTokenId, noTokenId] = tokenIds
+
+    // Fetch books AND midpoints in parallel. Midpoints are a reliable fallback
+    // when the book is empty or the API happens to sort asks descending.
+    const [yesBook, noBook, yesMid, noMid] = await Promise.all([
+      yesTokenId ? this.fetchBook(yesTokenId) : null,
+      noTokenId  ? this.fetchBook(noTokenId)  : null,
+      yesTokenId ? this.fetchMidpoint(yesTokenId) : null,
+      noTokenId  ? this.fetchMidpoint(noTokenId)  : null,
+    ])
+
+    const toLevels = (levels: BookLevel[]) =>
+      levels.map((l) => ({ price: parseFloat(l.price), size: l.size }))
+
+    // Best bid = highest bid price; best ask = lowest ask price.
+    // Always compute via Math.max/Math.min so sort order doesn't matter.
+    const bestBidPrice = (levels: BookLevel[]): number => {
+      if (!levels.length) return 0
+      return Math.max(...levels.map((l) => parseFloat(l.price)))
+    }
+    const bestAskPrice = (levels: BookLevel[], midFallback: number | null): number => {
+      const valid = levels.map((l) => parseFloat(l.price)).filter((p) => p > 0 && p < 1)
+      if (valid.length) return Math.min(...valid)
+      return midFallback ?? 0
+    }
 
     return {
       marketId: id,
       yes: {
-        bids: data.yes?.bids ?? [],
-        asks: data.yes?.asks ?? [],
-        bestBid: data.yes?.bids?.[0]?.price ?? 0,
-        bestAsk: data.yes?.asks?.[0]?.price ?? 0,
+        bids:    toLevels(yesBook?.bids ?? []),
+        asks:    toLevels(yesBook?.asks ?? []),
+        bestBid: bestBidPrice(yesBook?.bids ?? []),
+        bestAsk: bestAskPrice(yesBook?.asks ?? [], yesMid),
       },
       no: {
-        bids: data.no?.bids ?? [],
-        asks: data.no?.asks ?? [],
-        bestBid: data.no?.bids?.[0]?.price ?? 0,
-        bestAsk: data.no?.asks?.[0]?.price ?? 0,
+        bids:    toLevels(noBook?.bids ?? []),
+        asks:    toLevels(noBook?.asks ?? []),
+        bestBid: bestBidPrice(noBook?.bids ?? []),
+        bestAsk: bestAskPrice(noBook?.asks ?? [], noMid),
       },
     }
   }
 
+  private async fetchBook(tokenId: string): Promise<BookResponse | null> {
+    try {
+      return await apiFetch<BookResponse>(
+        `${this.orderbookApiBase}/book?token_id=${encodeURIComponent(tokenId)}`
+      )
+    } catch {
+      return null
+    }
+  }
+
+  private async fetchMidpoint(tokenId: string): Promise<number | null> {
+    try {
+      const data = await apiFetch<MidpointResponse>(
+        `${this.orderbookApiBase}/midpoint?token_id=${encodeURIComponent(tokenId)}`
+      )
+      const val = parseFloat(data.mid)
+      return isNaN(val) ? null : val
+    } catch {
+      return null
+    }
+  }
+
+  // ── Order Building / Signing / Submission ──────────────────────────────────
+
+  /**
+   * Build an unsigned order.
+   *
+   * Probable CLOB order fields:
+   *   maker        = proxy wallet address (Gnosis Safe).  Use EOA if no proxy yet.
+   *   signer       = EOA address (signs the order).
+   *   tokenId      = clobTokenId for the chosen outcome.
+   *   makerAmount  = USDT spent  (BUY) or tokens spent (SELL), 18-decimal wei.
+   *   takerAmount  = tokens received (BUY) or USDT received (SELL), 18-decimal wei.
+   *   side         = 0 (BUY) | 1 (SELL)
+   *   signatureType= 0 (EOA direct) or 1 (PROB_GNOSIS_SAFE)
+   *
+   * When the user hasn't set up a proxy wallet we default signatureType=0
+   * (EOA signs directly).  Switch to 1 once the proxy wallet is deployed.
+   */
   buildOrder(params: TradeInput): Order {
+    const SCALE = BigInt('1000000000000000000') // 1e18
+
+    const side = params.outcome === 'YES' ? 0 : 1
+
+    const price  = Math.min(Math.max(params.price, 0.001), 0.999)
+    const amount = parseFloat(params.amount)   // USDT, human-readable
+
+    // Convert to 18-decimal integers
+    const amountWei = BigInt(Math.round(amount * 1e6)) * (SCALE / 1_000_000n)
+    const priceWei  = BigInt(Math.round(price  * 1e6)) * (SCALE / 1_000_000n)
+
+    let makerAmount: bigint
+    let takerAmount: bigint
+    if (side === 0) {
+      // BUY: spend (price × size) USDT, receive size tokens
+      makerAmount = (amountWei * priceWei) / SCALE
+      takerAmount = amountWei
+    } else {
+      // SELL: spend size tokens, receive (price × size) USDT
+      makerAmount = amountWei
+      takerAmount = (amountWei * priceWei) / SCALE
+    }
+
     return {
-      marketId: params.marketId,
-      outcome: params.outcome,
-      price: String(Math.round(params.price * 1e6)), // scaled to 6 decimals (USDC)
-      amount: String(Math.round(parseFloat(params.amount) * 1e6)),
-      expiration: params.expiration,
+      marketId:     params.marketId,
+      outcome:      params.outcome,
+      price:        String(price),
+      amount:       String(amount),
+      expiration:   params.expiration,
       makerAddress: params.makerAddress,
+      extra: {
+        side,
+        makerAmount:   makerAmount.toString(),
+        takerAmount:   takerAmount.toString(),
+        feeRateBps:    '175',
+        nonce:         '0',
+        signatureType: 0,
+        taker:         '0x0000000000000000000000000000000000000000',
+        // tokenId must be set by Panel/OrderForm from market.clobTokenIds before signing
+        tokenId: '',
+      },
     }
   }
 
   async signOrder(order: Order, signer: WalletSigner): Promise<SignedOrder> {
+    const extra = order.extra as {
+      side: number; makerAmount: string; takerAmount: string
+      feeRateBps: string; nonce: string; signatureType: number
+      taker: string; tokenId: string
+    }
+
+    const salt = String(Math.round(Math.random() * Date.now()))
+
     const value = {
-      marketId: order.marketId,
-      outcome: order.outcome,
-      price: BigInt(order.price),
-      amount: BigInt(order.amount),
-      expiration: BigInt(order.expiration),
-      maker: order.makerAddress,
+      salt:          BigInt(salt),
+      maker:         order.makerAddress as `0x${string}`,
+      signer:        order.makerAddress as `0x${string}`,
+      taker:         extra.taker as `0x${string}`,
+      tokenId:       BigInt(extra.tokenId || '0'),
+      makerAmount:   BigInt(extra.makerAmount),
+      takerAmount:   BigInt(extra.takerAmount),
+      expiration:    BigInt(order.expiration),
+      nonce:         BigInt(extra.nonce),
+      feeRateBps:    BigInt(extra.feeRateBps),
+      side:          extra.side,
+      signatureType: extra.signatureType,
     }
 
     const signature = await signer.signTypedData(this.domain, this.orderTypes, value)
 
-    return {
-      ...order,
-      signature,
-      signedAt: Math.floor(Date.now() / 1000),
-    }
+    return { ...order, signature, signedAt: Math.floor(Date.now() / 1000), extra: { ...extra, salt } }
   }
 
   async submitOrder(order: SignedOrder, _signer: WalletSigner): Promise<ApiResponse> {
+    const extra = order.extra as {
+      side: number; makerAmount: string; takerAmount: string
+      feeRateBps: string; nonce: string; signatureType: number
+      taker?: string; tokenId?: string; salt?: string
+    }
+
     const body = {
-      marketId: order.marketId,
-      outcome: order.outcome,
-      price: order.price,
-      amount: order.amount,
-      expiration: order.expiration,
-      maker: order.makerAddress,
-      signature: order.signature,
+      deferExec: true,
+      order: {
+        salt:          extra.salt ?? String(Math.round(Math.random() * Date.now())),
+        maker:         order.makerAddress,
+        signer:        order.makerAddress,
+        taker:         extra.taker ?? '0x0000000000000000000000000000000000000000',
+        tokenId:       extra.tokenId ?? '0',
+        makerAmount:   extra.makerAmount,
+        takerAmount:   extra.takerAmount,
+        side:          extra.side === 0 ? 'BUY' : 'SELL',
+        expiration:    String(order.expiration),
+        nonce:         extra.nonce,
+        feeRateBps:    extra.feeRateBps,
+        signatureType: extra.signatureType,
+        signature:     order.signature,
+      },
+      owner:     order.makerAddress,
+      orderType: 'GTC',
     }
 
-    const res = await fetch(`${this.baseUrl}/orders`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-
-    const data = await res.json().catch(() => ({ message: res.statusText }))
-
-    if (!res.ok) {
-      return { success: false, message: data.message ?? 'Order submission failed', raw: data }
-    }
-
-    return {
-      success: true,
-      orderId: data.orderId ?? data.id,
-      txHash: data.txHash,
-      message: data.message ?? 'Order accepted',
-      raw: data,
+    // Note: order submission requires L2 HMAC auth headers.
+    // The panel must generate an API key via L1 EIP-712 flow first.
+    // Without auth headers the API returns 401 — the panel handles that error.
+    try {
+      const data = await apiFetch<Record<string, unknown>>(
+        `${this.orderbookApiBase}/order/${BSC_CHAIN_ID}`,
+        { method: 'POST', body: JSON.stringify(body) }
+      )
+      return {
+        success: true,
+        orderId: String(data.orderId ?? ''),
+        txHash:  data.txHash as string | undefined,
+        message: 'Order accepted',
+        raw:     data,
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Order submission failed'
+      return { success: false, message, raw: err }
     }
   }
 }
+

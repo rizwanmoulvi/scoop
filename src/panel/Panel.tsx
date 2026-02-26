@@ -42,20 +42,25 @@ function useMarketLoader(detected: DetectedMarket) {
 
     const adapter = getAdapter(detected.platform)
 
-    Promise.allSettled([
-      adapter.getMarket(detected.marketId),
-      adapter.getOrderBook(detected.marketId),
-    ]).then(([marketResult, orderBookResult]) => {
-      if (marketResult.status === 'fulfilled') setMarket(marketResult.value)
-      else setMarketError(`Could not load market: ${marketResult.reason?.message ?? 'Unknown error'}`)
-
-      if (orderBookResult.status === 'fulfilled') setOrderBook(orderBookResult.value)
-      // orderbook failure is non-fatal
-    }).catch((err: unknown) => {
-      setMarketError(err instanceof Error ? err.message : 'Failed to load market')
-    }).finally(() => {
-      setLoadingMarket(false)
-    })
+    // Chain: getMarket first, then pass clobTokenIds directly to getOrderBook.
+    // Running them in parallel means getOrderBook has no clobTokenIds yet and
+    // must re-fetch the market internally — avoid that double-fetch.
+    adapter.getMarket(detected.marketId)
+      .then(async (marketData) => {
+        setMarket(marketData)
+        try {
+          const ob = await adapter.getOrderBook(detected.marketId, marketData.clobTokenIds)
+          setOrderBook(ob)
+        } catch {
+          // Orderbook failure is non-fatal — market prices fall back to midpoint probability
+        }
+      })
+      .catch((err: unknown) => {
+        setMarketError(`Could not load market: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      })
+      .finally(() => {
+        setLoadingMarket(false)
+      })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detected.marketId, detected.platform])
 }

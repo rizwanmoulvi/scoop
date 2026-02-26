@@ -63,8 +63,13 @@ export function OrderForm() {
     parseFloat(amount) > 0 &&
     order.status === 'idle'
 
-  const yesPrice = orderBook?.yes?.bestAsk ?? market?.probability ?? 0.5
-  const noPrice = orderBook?.no?.bestAsk ?? (1 - (market?.probability ?? 0.5))
+  // Use bestAsk from orderbook if valid (>0 and <1), otherwise fall back to midpoint probability.
+  const yesMid = market?.probability ?? 0.5
+  const noMid  = 1 - yesMid
+  const yesAsk = orderBook?.yes?.bestAsk
+  const noAsk  = orderBook?.no?.bestAsk
+  const yesPrice = (yesAsk != null && yesAsk > 0 && yesAsk < 1) ? yesAsk : yesMid
+  const noPrice  = (noAsk  != null && noAsk  > 0 && noAsk  < 1) ? noAsk  : noMid
 
   const currentPrice = selectedOutcome === 'YES' ? yesPrice : noPrice
   const estimatedShares =
@@ -92,6 +97,16 @@ export function OrderForm() {
       }
 
       const unsignedOrder = adapter.buildOrder(tradeInput)
+
+      // For Probable: attach the correct clobTokenId for the chosen outcome
+      // so the adapter can include it in the EIP-712 message.
+      if (detectedMarket.platform === 'probable' && market?.clobTokenIds) {
+        const tokenIndex = selectedOutcome === 'YES' ? 0 : 1
+        const tokenId = market.clobTokenIds[tokenIndex]
+        if (tokenId && unsignedOrder.extra) {
+          (unsignedOrder.extra as Record<string, unknown>).tokenId = tokenId
+        }
+      }
 
       // Use stored address to build signer (avoids re-prompting MetaMask).
       setOrder({ status: 'signing' })

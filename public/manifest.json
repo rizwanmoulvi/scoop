@@ -15,6 +15,8 @@
     "https://twitter.com/*",
     "https://x.com/*",
     "https://probable.markets/*",
+    "https://market-api.probable.markets/*",
+    "https://api.probable.markets/*",
     "https://app.predict.fun/*",
     "https://app.opinion.trade/*"
   ],

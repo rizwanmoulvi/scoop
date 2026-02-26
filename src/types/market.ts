@@ -4,6 +4,10 @@ export type Outcome = 'YES' | 'NO'
 
 export interface Market {
   id: string
+  /** Numeric market ID used for Probable Orderbook API calls (e.g. 513) */
+  numericId?: number
+  /** CTF token IDs for CLOB trading: [yesTokenId, noTokenId] */
+  clobTokenIds?: string[]
   platform: Platform
   title: string
   description?: string
