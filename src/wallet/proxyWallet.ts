@@ -108,13 +108,18 @@ export async function proxyWalletExists(proxyAddress: string): Promise<boolean> 
 /**
  * Create the proxy wallet for the EOA.
  *
- * Flow:
+ * Flow (matches developer.probable.markets docs exactly):
  *  1. Compute the deterministic address and bail out early if already deployed.
- *  2. Read CREATE_PROXY_TYPEHASH and domainSeparator from the factory.
- *  3. Reconstruct the EIP-712 typed data and ask MetaMask to sign it
- *     (clean MetaMask EIP-712 modal — no scary warnings).
- *  4. Call factory.createProxy(zeroAddr, 0, zeroAddr, {v,r,s}).
- *  5. Poll for receipt and return the proxy address.
+ *  2. Fetch CREATE_PROXY_TYPEHASH and domainSeparator from the factory contract.
+ *  3. Compute structHash = keccak256(abi.encode(typehash, user, paymentToken, payment, paymentReceiver))
+ *  4. Compute messageHash = keccak256("\x19\x01" || domainSeparator || structHash)
+ *  5. Sign messageHash as raw bytes via personal_sign (MetaMask adds \x19Ethereum prefix).
+ *  6. Call factory.createProxy(zeroAddr, 0, zeroAddr, {v,r,s}).
+ *  7. Poll for receipt and return the proxy address.
+ *
+ * NOTE: We always use the raw-bytes signing path (personal_sign) — not
+ * signTypedData — because the factory domain structure varies and the official
+ * docs always use walletClient.signMessage({ message: { raw: ... } }).
  */
 export async function createProxyWallet(
   signer: WalletSigner,
@@ -134,47 +139,28 @@ export async function createProxyWallet(
     ethCall(PROXY_WALLET_FACTORY, factoryIface.encodeFunctionData('domainSeparator', [])),
     ethCall(PROXY_WALLET_FACTORY, factoryIface.encodeFunctionData('CREATE_PROXY_TYPEHASH', [])),
   ])
+  const domainSeparator     = factoryIface.decodeFunctionResult('domainSeparator',     domSepResult  )[0] as string
   const createProxyTypehash = factoryIface.decodeFunctionResult('CREATE_PROXY_TYPEHASH', typeHashResult)[0] as string
 
-  // Verify the domain separator matches the expected Gnosis Safe factory pattern.
-  // Expected: keccak256(abi.encode(DOMAIN_TYPEHASH, chainId, factoryAddress))
-  const expectedDomainSep = ethers.keccak256(
-    abiCoder.encode(['bytes32', 'uint256', 'address'], [DOMAIN_TYPEHASH, BSC_CHAIN_ID, PROXY_WALLET_FACTORY])
+  // structHash = keccak256(abi.encode(CREATE_PROXY_TYPEHASH, user, paymentToken, payment, paymentReceiver))
+  const structHash = ethers.keccak256(
+    abiCoder.encode(
+      ['bytes32', 'address', 'address', 'uint256', 'address'],
+      [createProxyTypehash, eoaAddress, ZERO, 0n, ZERO]
+    )
   )
-  const onChainDomainSep = factoryIface.decodeFunctionResult('domainSeparator', domSepResult)[0] as string
 
-  let signature: string
+  // messageHash = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash))
+  const messageHash = ethers.keccak256(
+    ethers.concat([new Uint8Array([0x19, 0x01]), domainSeparator, structHash])
+  )
 
-  if (onChainDomainSep.toLowerCase() === expectedDomainSep.toLowerCase()) {
-    // ── Happy path: use EIP-712 typed data (clean MetaMask modal) ──────────
-    onProgress?.('Sign the proxy wallet creation in MetaMask…')
-    signature = await signer.signTypedData(
-      { chainId: BSC_CHAIN_ID, verifyingContract: PROXY_WALLET_FACTORY },
-      {
-        CreateProxy: [
-          { name: 'user',            type: 'address' },
-          { name: 'paymentToken',    type: 'address' },
-          { name: 'payment',         type: 'uint256' },
-          { name: 'paymentReceiver', type: 'address' },
-        ],
-      },
-      { user: eoaAddress, paymentToken: ZERO, payment: 0n, paymentReceiver: ZERO }
-    )
-  } else {
-    // ── Fallback: compute the hash manually and sign with eth_sign ──────────
-    console.warn('[Scoop] proxy factory domain separator mismatch — falling back to eth_sign')
-    const structHash = ethers.keccak256(
-      abiCoder.encode(
-        ['bytes32', 'address', 'address', 'uint256', 'address'],
-        [createProxyTypehash, eoaAddress, ZERO, 0n, ZERO]
-      )
-    )
-    const messageHash = ethers.keccak256(
-      ethers.concat(['0x1901', onChainDomainSep, structHash])
-    )
-    onProgress?.('Sign the proxy wallet creation in MetaMask…')
-    signature = (await proxyRequest('eth_sign', [eoaAddress.toLowerCase(), messageHash])) as string
-  }
+  // Sign the raw message hash via personal_sign.
+  // This matches viem's signMessage({ message: { raw: toBytes(messageHash) } }).
+  // MetaMask prepends "\x19Ethereum Signed Message:\n32" so the factory
+  // verifies with toEthSignedMessageHash(messageHash).
+  onProgress?.('Sign the proxy wallet creation in MetaMask…')
+  const signature = (await proxyRequest('personal_sign', [messageHash, eoaAddress.toLowerCase()])) as string
 
   const { v, r, s } = splitSig(signature)
 
