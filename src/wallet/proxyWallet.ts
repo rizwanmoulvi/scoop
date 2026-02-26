@@ -53,8 +53,12 @@ const safeIface = new ethers.Interface([
 // ─── Low-level helpers ────────────────────────────────────────────────────────
 
 async function ethCall(to: string, data: string): Promise<string> {
-  // Use direct BSC RPC — MetaMask may return null for eth_call from extension contexts
-  return (await rpcCall('eth_call', [{ to, data }, 'latest'])) as string
+  // Try direct BSC RPC first, fall back to MetaMask bridge
+  try {
+    return (await rpcCall('eth_call', [{ to, data }, 'latest'])) as string
+  } catch {
+    return (await proxyRequest('eth_call', [{ to, data }, 'latest'])) as string
+  }
 }
 
 // Public BSC RPC endpoints used only for read-only polling (faster than MetaMask bridge)
@@ -137,13 +141,33 @@ export async function computeProxyAddress(eoaAddress: string): Promise<string> {
 
 /**
  * Returns true if the proxy wallet contract is already deployed.
- * Uses direct BSC RPC — MetaMask silently returns null for eth_getCode.
+ * Tries direct BSC RPC and MetaMask in parallel — accepts whichever succeeds first.
  */
 export async function proxyWalletExists(proxyAddress: string): Promise<boolean> {
-  const code = (await rpcCall('eth_getCode', [proxyAddress, 'latest'])) as string
-  const exists = typeof code === 'string' && code !== '0x' && code.length > 2
-  console.log(`[Scoop] proxyWalletExists(${proxyAddress.slice(0,8)}…) =`, exists, 'code.length =', code?.length)
-  return exists
+  const isDeployed = (code: unknown): boolean =>
+    typeof code === 'string' && code !== '0x' && code.length > 2
+
+  // Race both paths — whichever resolves first wins
+  const results = await Promise.allSettled([
+    rpcCall('eth_getCode', [proxyAddress, 'latest']),
+    proxyRequest('eth_getCode', [proxyAddress, 'latest']),
+  ])
+
+  for (const r of results) {
+    if (r.status === 'fulfilled' && isDeployed(r.value)) {
+      console.log('[Scoop] proxyWalletExists: deployed, code length =', (r.value as string).length)
+      return true
+    }
+  }
+
+  // Log what we got for debugging
+  results.forEach((r, i) => {
+    const src = i === 0 ? 'direct RPC' : 'MetaMask'
+    if (r.status === 'fulfilled') console.log(`[Scoop] ${src} eth_getCode =`, (r.value as string)?.slice(0, 20))
+    else console.warn(`[Scoop] ${src} eth_getCode failed:`, r.reason)
+  })
+
+  return false
 }
 
 /**

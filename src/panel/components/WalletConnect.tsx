@@ -48,6 +48,7 @@ export function WalletConnect() {
 
   const refreshProxy = React.useCallback(
     async (eoaAddress: string) => {
+      setWallet({ error: null })
       try {
         const proxyAddr = await computeProxyAddress(eoaAddress)
         console.log('[Scoop] computed proxy address:', proxyAddr)
@@ -60,20 +61,26 @@ export function WalletConnect() {
           setWallet({ proxyAddress: null })
         }
       } catch (err: unknown) {
-        console.warn('[Scoop] proxy wallet check failed:', err)
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn('[Scoop] proxy wallet check failed:', msg)
+        setWallet({ error: `Proxy check failed: ${msg}` })
       }
     },
     [setWallet, refreshApprovals]
   )
   // ── Auto-check proxy + approvals when address+chain are resolved ─────────────
-  // Use a ref to track the last (address, chainId) pair we already kicked off a
-  // check for, so we don't loop infinitely when proxyAddress stays null.
   const lastCheckedRef = React.useRef<string>('')
+
+  const handleRecheck = () => {
+    if (!wallet.address) return
+    lastCheckedRef.current = '' // clear so the effect fires again
+    setWallet({ proxyAddress: null, approvals: null, error: null })
+  }
 
   React.useEffect(() => {
     if (!wallet.address || wallet.chainId !== BSC_CHAIN_ID) return
     const key = `${wallet.address}-${wallet.chainId}`
-    if (lastCheckedRef.current === key) return   // already checked this combo
+    if (lastCheckedRef.current === key) return
     lastCheckedRef.current = key
     refreshProxy(wallet.address)
   }, [wallet.address, wallet.chainId, refreshProxy])
@@ -209,9 +216,21 @@ export function WalletConnect() {
       {/* No proxy wallet — creation needed */}
       {isProbable && onBSC && !wallet.isCheckingApprovals && !wallet.isCreatingProxy && !hasProxy && !paperTrading && (
         <div className="space-y-1.5">
-          <div className="px-3 py-2 bg-yellow-50 border-2 border-yellow-400 rounded-2xl text-xs font-bold text-yellow-700">
-            📳 A one-time proxy wallet is required by Probable to place orders.
-          </div>
+          {wallet.error ? (
+            <div className="px-3 py-2 bg-red-50 border-2 border-red-400 rounded-2xl text-xs font-bold text-red-700">
+              ⚠️ {wallet.error}
+            </div>
+          ) : (
+            <div className="px-3 py-2 bg-yellow-50 border-2 border-yellow-400 rounded-2xl text-xs font-bold text-yellow-700">
+              📳 A one-time proxy wallet is required by Probable to place orders.
+            </div>
+          )}
+          <button
+            onClick={handleRecheck}
+            className="w-full py-1.5 px-4 rounded-2xl font-bold text-xs bg-white hover:bg-gray-50 active:translate-y-0.5 text-gray-600 border-2 border-gray-300 shadow-sm transition-all"
+          >
+            🔄 Re-check Proxy
+          </button>
           <button
             onClick={handleCreateProxy}
             className="w-full py-2.5 px-4 rounded-2xl font-extrabold text-sm bg-brand-600 hover:bg-brand-700 active:translate-y-0.5 text-white border-2 border-brand-700 shadow-btn transition-all"
