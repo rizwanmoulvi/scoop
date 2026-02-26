@@ -178,45 +178,90 @@ export async function proxyWalletExists(proxyAddress: string): Promise<boolean> 
   return false
 }
 
+type LogEntry = { data: string }
+type LogsResponse = { result?: LogEntry[]; error?: { message?: string } }
+
+/** Single eth_getLogs page fetch via Infura. Returns logs or throws with the raw message. */
+async function fetchLogPage(fromBlock: number, toBlock: number): Promise<LogEntry[]> {
+  const res = await fetch(BSC_RPC_INFURA, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 1,
+      method: 'eth_getLogs',
+      params: [{
+        address: PROXY_WALLET_FACTORY,
+        topics:  [PROXY_CREATION_TOPIC],
+        fromBlock: '0x' + fromBlock.toString(16),
+        toBlock:   '0x' + toBlock.toString(16),
+      }],
+    }),
+  })
+  const json = await res.json() as LogsResponse
+  if (json.error) throw new Error(json.error.message ?? 'eth_getLogs error')
+  return json.result ?? []
+}
+
+/**
+ * Parse Infura's "Try with this block range [0xFROM, 0xTO]" hint.
+ * Returns the suggested chunk size in blocks, or null if not parseable.
+ */
+function parseInfuraChunkSize(errMsg: string): number | null {
+  const m = errMsg.match(/\[0x([0-9a-fA-F]+),\s*0x([0-9a-fA-F]+)\]/)
+  if (!m) return null
+  const from = parseInt(m[1], 16)
+  const to   = parseInt(m[2], 16)
+  return to > from ? to - from : null
+}
+
 /**
  * Scan factory ProxyCreation logs to find a proxy where owner === eoaAddress.
- * Used as fallback when eth_getCode at the computed address returns 0x (e.g.
- * the proxy was created with a different EOA that is no longer the active account).
+ * Paginates automatically if Infura returns a "too many results" error.
  */
 async function findProxyFromLogs(eoaAddress: string): Promise<string | null> {
   const normalized = eoaAddress.toLowerCase()
-  try {
-    // Use Infura directly for log queries — public nodes rate-limit large eth_getLogs ranges
-    const res = await fetch(BSC_RPC_INFURA, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0', id: 1,
-        method: 'eth_getLogs',
-        params: [{
-          address: PROXY_WALLET_FACTORY,
-          topics:  [PROXY_CREATION_TOPIC],
-          fromBlock: FACTORY_DEPLOY_BLOCK,
-          toBlock: 'latest',
-        }],
-      }),
-    })
-    const json = await res.json() as { result?: Array<{ data: string }>; error?: { message?: string } }
-    if (json.error) throw new Error(json.error.message ?? 'Infura eth_getLogs error')
-    const logs = json.result ?? []
+  const from = parseInt(FACTORY_DEPLOY_BLOCK, 16)
+  const latestHex = (await rpcCall('eth_blockNumber', [])) as string
+  const latest    = parseInt(latestHex, 16)
 
-    console.log(`[Scoop] scanning ${logs.length} ProxyCreation logs for owner ${eoaAddress}`)
+  const search = (logs: LogEntry[]): string | null => {
     for (const log of logs) {
       const [proxy, owner] = abiCoder.decode(['address', 'address'], log.data)
       if ((owner as string).toLowerCase() === normalized) {
-        console.log('[Scoop] found proxy via logs:', proxy, 'owner:', owner)
+        console.log('[Scoop] found proxy via logs:', proxy)
         return proxy as string
       }
     }
-  } catch (e) {
-    console.warn('[Scoop] findProxyFromLogs failed:', e)
+    return null
   }
-  return null
+
+  // Try the full range first
+  try {
+    const logs = await fetchLogPage(from, latest)
+    console.log(`[Scoop] scanning ${logs.length} ProxyCreation logs`)
+    return search(logs)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    const chunkSize = parseInfuraChunkSize(msg)
+    if (!chunkSize) {
+      console.warn('[Scoop] findProxyFromLogs failed (no chunk hint):', msg)
+      return null
+    }
+    console.log(`[Scoop] paginating logs with chunk size ${chunkSize} blocks…`)
+
+    // Paginate using the hint from Infura
+    for (let start = from; start <= latest; start += chunkSize) {
+      const end = Math.min(start + chunkSize - 1, latest)
+      try {
+        const logs = await fetchLogPage(start, end)
+        const found = search(logs)
+        if (found) return found
+      } catch (pageErr) {
+        console.warn(`[Scoop] log page [${start.toString(16)}, ${end.toString(16)}] failed:`, pageErr)
+      }
+    }
+    return null
+  }
 }
 
 /**
@@ -256,6 +301,24 @@ export async function detectProxyWallet(eoaAddress: string): Promise<string | nu
   // Step 3 — log scan fallback (handles wrong-EOA deployments)
   console.log('[Scoop] expected address has no code — scanning factory logs…')
   return findProxyFromLogs(eoaAddress)
+}
+
+/**
+ * Check if a specific address has deployed contract code.
+ * Used to validate a manually entered proxy wallet address.
+ */
+export async function verifyProxyAddress(address: string): Promise<boolean> {
+  const isDeployed = (code: unknown) =>
+    typeof code === 'string' && code !== '0x' && code.length > 2
+  try {
+    const code = await rpcCall('eth_getCode', [address, 'latest'])
+    if (isDeployed(code)) return true
+  } catch { /* fall through */ }
+  try {
+    const code = await proxyRequest('eth_getCode', [address, 'latest'])
+    if (isDeployed(code)) return true
+  } catch { /* fall through */ }
+  return false
 }
 
 /**

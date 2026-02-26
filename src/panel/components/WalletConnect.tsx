@@ -3,7 +3,7 @@ import { useStore } from '../store'
 import { connectWallet, shortenAddress, watchWalletEvents, ProxySigner } from '../../wallet/wallet'
 import { switchNetwork, PLATFORM_CHAINS } from '../../wallet/network'
 import { checkApprovals, grantApprovals } from '../../wallet/approvals'
-import { detectProxyWallet, createProxyWallet } from '../../wallet/proxyWallet'
+import { detectProxyWallet, createProxyWallet, verifyProxyAddress } from '../../wallet/proxyWallet'
 
 const BSC_CHAIN_ID = 56
 
@@ -74,6 +74,36 @@ export function WalletConnect() {
     if (!wallet.address) return
     lastCheckedRef.current = '' // clear so the effect fires again
     setWallet({ proxyAddress: null, approvals: null, error: null })
+  }
+
+  // ── Manual proxy address override ──────────────────────────────────────────
+  const [showManualInput, setShowManualInput] = React.useState(false)
+  const [manualProxy, setManualProxy]         = React.useState('')
+  const [verifying, setVerifying]             = React.useState(false)
+
+  const handleManualVerify = async () => {
+    const addr = manualProxy.trim()
+    if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) {
+      setWallet({ error: 'Invalid address format' })
+      return
+    }
+    setVerifying(true)
+    setWallet({ error: null })
+    try {
+      const ok = await verifyProxyAddress(addr)
+      if (ok) {
+        setShowManualInput(false)
+        setManualProxy('')
+        setWallet({ proxyAddress: addr })
+        await refreshApprovals(addr)
+      } else {
+        setWallet({ error: 'No contract found at that address on BSC' })
+      }
+    } catch (e: unknown) {
+      setWallet({ error: e instanceof Error ? e.message : 'Verification failed' })
+    } finally {
+      setVerifying(false)
+    }
   }
 
   React.useEffect(() => {
@@ -224,18 +254,53 @@ export function WalletConnect() {
               📳 A one-time proxy wallet is required by Probable to place orders.
             </div>
           )}
-          <button
-            onClick={handleRecheck}
-            className="w-full py-1.5 px-4 rounded-2xl font-bold text-xs bg-white hover:bg-gray-50 active:translate-y-0.5 text-gray-600 border-2 border-gray-300 shadow-sm transition-all"
-          >
-            🔄 Re-check Proxy
-          </button>
-          <button
-            onClick={handleCreateProxy}
-            className="w-full py-2.5 px-4 rounded-2xl font-extrabold text-sm bg-brand-600 hover:bg-brand-700 active:translate-y-0.5 text-white border-2 border-brand-700 shadow-btn transition-all"
-          >
-            🔐 Create Proxy Wallet
-          </button>
+          {showManualInput ? (
+            <div className="space-y-1.5">
+              <input
+                type="text"
+                value={manualProxy}
+                onChange={(e) => setManualProxy(e.target.value)}
+                placeholder="0x… proxy wallet address"
+                className="w-full px-3 py-2 rounded-2xl text-xs border-2 border-gray-300 focus:border-brand-400 outline-none font-mono"
+              />
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => { setShowManualInput(false); setManualProxy('') }}
+                  className="flex-1 py-1.5 px-3 rounded-2xl font-bold text-xs bg-white hover:bg-gray-50 text-gray-500 border-2 border-gray-300 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleManualVerify}
+                  disabled={verifying}
+                  className="flex-1 py-1.5 px-3 rounded-2xl font-bold text-xs bg-brand-600 hover:bg-brand-700 text-white border-2 border-brand-700 transition-all disabled:opacity-50"
+                >
+                  {verifying ? 'Checking…' : '✓ Verify & Use'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <button
+                onClick={handleRecheck}
+                className="w-full py-1.5 px-4 rounded-2xl font-bold text-xs bg-white hover:bg-gray-50 active:translate-y-0.5 text-gray-600 border-2 border-gray-300 shadow-sm transition-all"
+              >
+                🔄 Re-check Proxy
+              </button>
+              <button
+                onClick={handleCreateProxy}
+                className="w-full py-2.5 px-4 rounded-2xl font-extrabold text-sm bg-brand-600 hover:bg-brand-700 active:translate-y-0.5 text-white border-2 border-brand-700 shadow-btn transition-all"
+              >
+                🔐 Create Proxy Wallet
+              </button>
+              <button
+                onClick={() => setShowManualInput(true)}
+                className="w-full py-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                Already have a proxy wallet? Enter address →
+              </button>
+            </>
+          )}
         </div>
       )}
 
