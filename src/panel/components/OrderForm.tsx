@@ -4,7 +4,6 @@ import type { Outcome } from '../../types/market'
 import { getAdapter } from '../../platforms'
 import type { ProbableAdapter } from '../../platforms/ProbableAdapter'
 import { connectWallet, ProxySigner } from '../../wallet/wallet'
-import { buildExpiration } from '../../utils/eip712'
 
 function OutcomeButton({
   outcome,
@@ -102,7 +101,7 @@ export function OrderForm() {
         outcome: selectedOutcome,
         price: currentPrice,
         amount,
-        expiration: buildExpiration(3600),
+        expiration: 0,
         // For Probable: proxy wallet is the on-chain maker; EOA is the signer
         makerAddress: (isProbable && wallet.proxyAddress) ? wallet.proxyAddress : (wallet.address ?? ''),
       }

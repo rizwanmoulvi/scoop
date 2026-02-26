@@ -165,3 +165,85 @@ export async function grantApprovals(
     onProgress?.('Step 3/3 — Done ✓')
   }
 }
+
+// ─── USDT balance + deposit helpers ──────────────────────────────────────────
+
+/** balanceOf(address) = 0x70a08231 */
+function encodeBalanceOfCall(account: string): string {
+  return '0x70a08231' + padAddr(account)
+}
+
+/** transfer(address to, uint256 amount) = 0xa9059cbb */
+function encodeTransferData(to: string, amountWei: bigint): string {
+  return '0xa9059cbb' + padAddr(to) + amountWei.toString(16).padStart(64, '0')
+}
+
+/**
+ * Check the proxy wallet's USDT balance.
+ * Returns raw bigint with 18 decimals (divide by 1e18 for human-readable).
+ */
+export async function checkProxyUsdtBalance(proxyAddress: string): Promise<bigint> {
+  const data = encodeBalanceOfCall(proxyAddress)
+  try {
+    const result = await proxyRequest('eth_call', [{ to: USDT_ADDRESS, data }, 'latest'])
+    return decodeUint256(result as string)
+  } catch {
+    return 0n
+  }
+}
+
+/**
+ * Check the EOA's USDT balance.
+ * Returns raw bigint with 18 decimals.
+ */
+export async function checkEoaUsdtBalance(eoaAddress: string): Promise<bigint> {
+  const data = encodeBalanceOfCall(eoaAddress)
+  try {
+    const result = await proxyRequest('eth_call', [{ to: USDT_ADDRESS, data }, 'latest'])
+    return decodeUint256(result as string)
+  } catch {
+    return 0n
+  }
+}
+
+/**
+ * Transfer USDT from the EOA to the proxy wallet.
+ * amountWei is a raw 18-decimal bigint.
+ */
+export async function depositUsdtToProxy(
+  signer: WalletSigner,
+  proxyAddress: string,
+  amountWei: bigint,
+  onProgress?: (msg: string) => void
+): Promise<void> {
+  const eoaAddress = await signer.getAddress()
+  const data = encodeTransferData(proxyAddress, amountWei)
+
+  onProgress?.('Sending USDT deposit — approve in MetaMask…')
+  const txHash = (await proxyRequest('eth_sendTransaction', [{
+    from: eoaAddress,
+    to: USDT_ADDRESS,
+    data,
+    gas: '0x186A0', // 100,000 gas
+  }])) as string
+
+  // Poll MetaMask for receipt (supports eth_getTransactionReceipt)
+  for (let i = 0; i < 40; i++) {
+    await new Promise<void>((r) => setTimeout(r, 3000))
+    const elapsed = Math.round(((i + 1) * 3) )
+    onProgress?.(`Waiting for confirmation… ${elapsed}s — bscscan.com/tx/${txHash.slice(0, 10)}…`)
+    try {
+      const receipt = (await proxyRequest('eth_getTransactionReceipt', [txHash])) as {
+        status?: string
+      } | null
+      if (receipt?.status === '0x1') return
+      if (receipt?.status === '0x0') {
+        throw new Error('Transaction reverted — check BSCScan: bscscan.com/tx/' + txHash)
+      }
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message.startsWith('Transaction reverted')) throw e
+      // Ignore transient RPC errors and keep polling
+    }
+  }
+  throw new Error(`Deposit not confirmed after 2 minutes — check BSCScan: bscscan.com/tx/${txHash}`)
+}

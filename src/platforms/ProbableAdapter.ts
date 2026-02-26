@@ -329,10 +329,14 @@ export class ProbableAdapter implements PredictionPlatform {
       rawTakerAmt = round4(tokens * price)   // USDC received
     }
 
-    // Convert to 18-decimal bigints  (n × 1e6 × 1e12 = n × 1e18)
-    const toWei = (n: number): bigint => BigInt(Math.round(n * 1_000_000)) * 1_000_000_000_000n
-    const makerAmount = toWei(rawMakerAmt)
-    const takerAmount = toWei(rawTakerAmt)
+    // Convert to 18-decimal bigints using string-based parseUnits (avoids float rounding)
+    const parseUnits18 = (value: string): bigint => {
+      const [intPart, fracPart = ''] = value.split('.')
+      const frac = fracPart.slice(0, 18).padEnd(18, '0')
+      return BigInt((intPart || '0') + frac)
+    }
+    const makerAmount = parseUnits18(rawMakerAmt.toFixed(6))
+    const takerAmount = parseUnits18(rawTakerAmt.toFixed(6))
 
     return {
       marketId:     params.marketId,

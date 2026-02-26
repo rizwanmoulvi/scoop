@@ -2,7 +2,7 @@ import React from 'react'
 import { useStore } from '../store'
 import { connectWallet, shortenAddress, watchWalletEvents, ProxySigner } from '../../wallet/wallet'
 import { switchNetwork, PLATFORM_CHAINS } from '../../wallet/network'
-import { checkApprovals, grantApprovals } from '../../wallet/approvals'
+import { checkApprovals, grantApprovals, checkProxyUsdtBalance, checkEoaUsdtBalance, depositUsdtToProxy } from '../../wallet/approvals'
 import { detectProxyWallet, createProxyWallet, verifyProxyAddress } from '../../wallet/proxyWallet'
 
 const BSC_CHAIN_ID = 56
@@ -177,6 +177,60 @@ export function WalletConnect() {
     }
   }
 
+  // ── Deposit USDT to proxy ───────────────────────────────────────────────────
+
+  const [depositAmount, setDepositAmount] = React.useState('')
+  const [eoaUsdtBalance, setEoaUsdtBalance] = React.useState<string | null>(null)
+
+  const refreshUsdtBalances = React.useCallback(async () => {
+    if (!wallet.proxyAddress || !wallet.address) return
+    const [proxyBal, eoaBal] = await Promise.all([
+      checkProxyUsdtBalance(wallet.proxyAddress),
+      checkEoaUsdtBalance(wallet.address),
+    ])
+    const fmt = (wei: bigint) => {
+      const whole = wei / 10n ** 18n
+      const frac  = (wei % 10n ** 18n) * 100n / 10n ** 18n
+      return `${whole}.${frac.toString().padStart(2, '0')}`
+    }
+    setWallet({ proxyUsdtBalance: fmt(proxyBal) })
+    setEoaUsdtBalance(fmt(eoaBal))
+  }, [wallet.proxyAddress, wallet.address, setWallet])
+
+  // Auto-check balances once all approvals are in place
+  React.useEffect(() => {
+    if (wallet.approvals?.allApproved && wallet.proxyAddress && wallet.address) {
+      refreshUsdtBalances()
+    }
+  }, [wallet.approvals?.allApproved, wallet.proxyAddress, wallet.address, refreshUsdtBalances])
+
+  const handleDeposit = async () => {
+    if (!wallet.address || !wallet.proxyAddress) return
+    const parsed = parseFloat(depositAmount)
+    if (isNaN(parsed) || parsed <= 0) {
+      setWallet({ error: 'Enter a valid USDT amount' })
+      return
+    }
+    // String-based parseUnits to avoid float imprecision
+    const [intPart, fracPart = ''] = depositAmount.split('.')
+    const frac = fracPart.slice(0, 18).padEnd(18, '0')
+    const amountWei = BigInt((intPart || '0') + frac)
+
+    setWallet({ isDepositingUsdt: true, depositStep: 'Starting…', error: null })
+    try {
+      const signer = new ProxySigner(wallet.address)
+      await depositUsdtToProxy(signer, wallet.proxyAddress, amountWei, (msg) => {
+        setWallet({ depositStep: msg })
+      })
+      setWallet({ isDepositingUsdt: false, depositStep: '' })
+      setDepositAmount('')
+      await refreshUsdtBalances()
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Deposit failed'
+      setWallet({ isDepositingUsdt: false, error: message, depositStep: '' })
+    }
+  }
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   if (!wallet.address) {
@@ -346,12 +400,66 @@ export function WalletConnect() {
         </div>
       )}
 
-      {/* All approved */}
+      {/* All approved — show USDT deposit section */}
       {isProbable && onBSC && hasProxy && (approvals?.allApproved || paperTrading) && (
-        <div className="px-3 py-2 bg-green-50 border-2 border-green-300 rounded-2xl text-xs font-bold text-green-700">
-          {paperTrading
-            ? '📝 Paper mode — approvals not needed'
-            : '✅ Token approvals in place — ready to trade'}
+        <div className="space-y-1.5">
+          <div className="px-3 py-2 bg-green-50 border-2 border-green-300 rounded-2xl text-xs font-bold text-green-700">
+            {paperTrading
+              ? '📝 Paper mode — approvals not needed'
+              : '✅ Token approvals in place'}
+          </div>
+
+          {/* USDT balance in proxy */}
+          {!paperTrading && (
+            <div className="space-y-1.5">
+              {wallet.proxyUsdtBalance !== null ? (
+                <div className="px-3 py-2 bg-blue-50 border-2 border-blue-200 rounded-2xl text-xs text-blue-800">
+                  <span className="font-bold">Proxy USDT:</span> {wallet.proxyUsdtBalance} USDT
+                  {eoaUsdtBalance !== null && (
+                    <span className="ml-2 text-blue-500">(Wallet: {eoaUsdtBalance} USDT)</span>
+                  )}
+                  <button
+                    onClick={refreshUsdtBalances}
+                    className="ml-2 underline text-blue-500 hover:text-blue-700"
+                  >
+                    refresh
+                  </button>
+                </div>
+              ) : (
+                <div className="px-3 py-1.5 text-xs text-gray-500 text-center">Checking USDT balances…</div>
+              )}
+
+              {/* Deposit flow */}
+              {!wallet.isDepositingUsdt ? (
+                <div className="flex gap-1.5">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="Amount (USDT)"
+                    value={depositAmount}
+                    onChange={(e) => setDepositAmount(e.target.value)}
+                    className="flex-1 min-w-0 px-2.5 py-1.5 rounded-xl border-2 border-gray-200 text-xs focus:outline-none focus:border-brand-400"
+                  />
+                  <button
+                    onClick={handleDeposit}
+                    disabled={!depositAmount || parseFloat(depositAmount) <= 0}
+                    className="shrink-0 py-1.5 px-3 rounded-xl font-extrabold text-xs bg-brand-600 hover:bg-brand-700 active:translate-y-0.5 text-white border-2 border-brand-700 shadow-btn transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    💰 Deposit USDT
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 px-3 py-2.5 bg-blue-50 border-2 border-brand-300 rounded-2xl text-xs font-bold text-brand-700">
+                  <svg className="animate-spin h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                  </svg>
+                  <span className="leading-snug">{wallet.depositStep || 'Depositing USDT…'}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
