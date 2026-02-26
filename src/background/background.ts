@@ -102,9 +102,12 @@ chrome.runtime.onMessage.addListener(
         }
 
         console.log(`[Scoop BG] API_FETCH ${method} ${url}`)
-        fetch(url, { method, headers: { 'Content-Type': 'application/json', ...headers }, body })
+        fetch(url, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers }, body })
           .then(async (res) => {
-            const data = await res.json().catch(() => null)
+            // Try JSON first; fall back to text so error bodies aren't lost
+            let data: unknown = null
+            const text = await res.text().catch(() => '')
+            try { data = text ? JSON.parse(text) : null } catch { data = text || null }
             if (!res.ok) console.warn(`[Scoop BG] API_FETCH ${res.status} ${url}`, data)
             sendResponse({ ok: res.ok, status: res.status, data })
           })

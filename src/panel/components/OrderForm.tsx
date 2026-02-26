@@ -60,8 +60,9 @@ export function OrderForm() {
 
   const isConnected = Boolean(wallet.address)
   const isProbable  = detectedMarket?.platform === 'probable'
-  // In paper trading mode, approvals are not required
+  // In paper trading mode, approvals + proxy are not required
   const approvalsOk = !isProbable || paperTrading || Boolean(wallet.approvals?.allApproved)
+  const proxyOk     = !isProbable || paperTrading || Boolean(wallet.proxyAddress)
 
   const canSubmit =
     isConnected &&
@@ -69,7 +70,8 @@ export function OrderForm() {
     amount !== '' &&
     parseFloat(amount) > 0 &&
     order.status === 'idle' &&
-    approvalsOk
+    approvalsOk &&
+    proxyOk
 
   // Use bestAsk from orderbook if valid (>0 and <1), otherwise fall back to midpoint probability.
   const yesMid = market?.probability ?? 0.5
@@ -101,7 +103,8 @@ export function OrderForm() {
         price: currentPrice,
         amount,
         expiration: buildExpiration(3600),
-        makerAddress: wallet.address,
+        // For Probable: proxy wallet is the on-chain maker; EOA is the signer
+        makerAddress: (isProbable && wallet.proxyAddress) ? wallet.proxyAddress : (wallet.address ?? ''),
       }
 
       const unsignedOrder = adapter.buildOrder(tradeInput)
@@ -113,6 +116,10 @@ export function OrderForm() {
         const tokenId = market.clobTokenIds[tokenIndex]
         if (tokenId && unsignedOrder.extra) {
           (unsignedOrder.extra as Record<string, unknown>).tokenId = tokenId
+        }
+        // Inject proxy wallet address so submitOrder can use it for maker/owner
+        if (wallet.proxyAddress && unsignedOrder.extra) {
+          (unsignedOrder.extra as Record<string, unknown>).proxyAddress = wallet.proxyAddress
         }
       }
 

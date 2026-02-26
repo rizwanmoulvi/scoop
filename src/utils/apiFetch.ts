@@ -58,7 +58,8 @@ export async function apiFetch<T = unknown>(
       throw new Error(`API_FETCH error: ${response.error}`)
     }
     if (!response?.ok) {
-      throw new Error(`HTTP ${response?.status ?? '?'}: ${url}`)
+      const detail = response?.data ? ` — ${JSON.stringify(response.data)}` : ''
+      throw new Error(`HTTP ${response?.status ?? '?'}: ${url}${detail}`)
     }
 
     return response.data as T

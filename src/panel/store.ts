@@ -27,6 +27,12 @@ export interface WalletState {
   isApprovingTokens: boolean
   /** Status text shown during approval flow */
   approvalStep: string
+  /** Proxy wallet (Gnosis Safe) address for this EOA — null if not yet deployed */
+  proxyAddress: string | null
+  /** True while createProxyWallet() is running */
+  isCreatingProxy: boolean
+  /** Status text shown during proxy creation flow */
+  proxyStep: string
 }
 
 export interface AppStore {
@@ -76,6 +82,9 @@ const DEFAULT_WALLET: WalletState = {
   isCheckingApprovals: false,
   isApprovingTokens: false,
   approvalStep: '',
+  proxyAddress: null,
+  isCreatingProxy: false,
+  proxyStep: '',
 }
 
 const DEFAULT_ORDER: OrderState = {

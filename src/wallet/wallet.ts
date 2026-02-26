@@ -135,7 +135,7 @@ export function watchWalletEvents(
   onChainChanged: (chainId: number) => void
 ): () => void {
   let lastAddress = ''
-  let lastChain = 0
+  let lastChain = -1  // -1 so first real chain value always fires onChainChanged
 
   const id = setInterval(async () => {
     try {
@@ -148,11 +148,9 @@ export function watchWalletEvents(
 
       const hexChain = (await proxyRequest('eth_chainId', [])) as string
       const chain = parseInt(hexChain, 16)
-      if (chain !== lastChain && lastChain !== 0) {
+      if (chain !== lastChain) {
         lastChain = chain
         onChainChanged(chain)
-      } else {
-        lastChain = chain
       }
     } catch {
       // silently ignore if proxy not reachable

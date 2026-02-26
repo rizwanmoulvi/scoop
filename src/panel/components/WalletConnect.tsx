@@ -1,8 +1,9 @@
 import React from 'react'
 import { useStore } from '../store'
-import { connectWallet, shortenAddress, watchWalletEvents } from '../../wallet/wallet'
+import { connectWallet, shortenAddress, watchWalletEvents, ProxySigner } from '../../wallet/wallet'
 import { switchNetwork, PLATFORM_CHAINS } from '../../wallet/network'
 import { checkApprovals, grantApprovals } from '../../wallet/approvals'
+import { computeProxyAddress, proxyWalletExists, createProxyWallet } from '../../wallet/proxyWallet'
 
 const BSC_CHAIN_ID = 56
 
@@ -26,13 +27,13 @@ export function WalletConnect() {
     return cleanup
   }, [setWallet])
 
-  // ── Approval check ──────────────────────────────────────────────────────────
+  // ── Approval check (runs after proxy is confirmed) ──────────────────────────
 
   const refreshApprovals = React.useCallback(
-    async (address: string) => {
+    async (proxyAddress: string) => {
       setWallet({ isCheckingApprovals: true })
       try {
-        const status = await checkApprovals(address)
+        const status = await checkApprovals(proxyAddress)
         setWallet({ approvals: status, isCheckingApprovals: false })
       } catch (err: unknown) {
         console.warn('[Scoop] approval check failed:', err)
@@ -42,6 +43,32 @@ export function WalletConnect() {
     [setWallet]
   )
 
+  // ── Proxy wallet detection ──────────────────────────────────────────────────
+
+  const refreshProxy = React.useCallback(
+    async (eoaAddress: string) => {
+      try {
+        const proxyAddr = await computeProxyAddress(eoaAddress)
+        const exists = await proxyWalletExists(proxyAddr)
+        if (exists) {
+          setWallet({ proxyAddress: proxyAddr })
+          await refreshApprovals(proxyAddr)
+        } else {
+          setWallet({ proxyAddress: null })
+        }
+      } catch (err: unknown) {
+        console.warn('[Scoop] proxy wallet check failed:', err)
+      }
+    },
+    [setWallet, refreshApprovals]
+  )
+  // ── Auto-check proxy + approvals when address+chain are resolved ─────────────
+
+  React.useEffect(() => {
+    if (wallet.address && wallet.chainId === BSC_CHAIN_ID && wallet.approvals === null && !wallet.isCheckingApprovals) {
+      refreshProxy(wallet.address)
+    }
+  }, [wallet.address, wallet.chainId, wallet.approvals, wallet.isCheckingApprovals, refreshProxy])
   // ── Connect ─────────────────────────────────────────────────────────────────
 
   const handleConnect = async () => {
@@ -56,29 +83,49 @@ export function WalletConnect() {
       if (requiredChain && connected.chainId !== requiredChain) {
         await switchNetwork(requiredChain)
         setWallet({ address: connected.address, chainId: requiredChain, isConnecting: false })
-        if (requiredChain === BSC_CHAIN_ID) await refreshApprovals(connected.address)
+        if (requiredChain === BSC_CHAIN_ID) await refreshProxy(connected.address)
         return
       }
 
       setWallet({ address: connected.address, chainId: connected.chainId, isConnecting: false })
-      if (connected.chainId === BSC_CHAIN_ID) await refreshApprovals(connected.address)
+      if (connected.chainId === BSC_CHAIN_ID) await refreshProxy(connected.address)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to connect wallet'
       setWallet({ error: message, isConnecting: false })
     }
   }
 
+  // ── Create proxy wallet ─────────────────────────────────────────────────────
+
+  const handleCreateProxy = async () => {
+    if (!wallet.address) return
+    setWallet({ isCreatingProxy: true, error: null, proxyStep: 'Starting…' })
+    try {
+      const signer = new ProxySigner(wallet.address)
+      const proxyAddr = await createProxyWallet(signer, (msg) => {
+        setWallet({ proxyStep: msg })
+      })
+      setWallet({ proxyAddress: proxyAddr, proxyStep: 'Checking approvals…' })
+      await refreshApprovals(proxyAddr)
+      setWallet({ isCreatingProxy: false, proxyStep: '' })
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to create proxy wallet'
+      setWallet({ isCreatingProxy: false, error: message, proxyStep: '' })
+    }
+  }
+
   // ── Approve tokens ──────────────────────────────────────────────────────────
 
   const handleApprove = async () => {
-    if (!wallet.address || !wallet.approvals) return
+    if (!wallet.address || !wallet.proxyAddress || !wallet.approvals) return
     setWallet({ isApprovingTokens: true, error: null, approvalStep: 'Starting…' })
     try {
-      await grantApprovals(wallet.address, wallet.approvals, (msg) => {
+      const signer = new ProxySigner(wallet.address)
+      await grantApprovals(signer, wallet.proxyAddress, wallet.approvals, (msg) => {
         setWallet({ approvalStep: msg })
       })
       setWallet({ approvalStep: 'Verifying…' })
-      await refreshApprovals(wallet.address)
+      await refreshApprovals(wallet.proxyAddress)
       setWallet({ isApprovingTokens: false, approvalStep: '' })
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Approval failed'
@@ -118,6 +165,7 @@ export function WalletConnect() {
   const isProbable = detectedMarket?.platform === 'probable'
   const onBSC      = wallet.chainId === BSC_CHAIN_ID
   const approvals  = wallet.approvals
+  const hasProxy   = Boolean(wallet.proxyAddress)
 
   return (
     <div className="space-y-2">
@@ -139,19 +187,45 @@ export function WalletConnect() {
         </div>
       )}
 
-      {/* Checking approvals */}
+      {/* Checking proxy / approvals */}
       {isProbable && onBSC && wallet.isCheckingApprovals && !paperTrading && (
         <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border-2 border-brand-200 rounded-2xl text-xs font-bold text-brand-600">
           <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
           </svg>
-          Checking token approvals…
+          {hasProxy ? 'Checking token approvals…' : 'Detecting proxy wallet…'}
         </div>
       )}
 
-      {/* Approvals needed */}
-      {isProbable && onBSC && approvals && !approvals.allApproved && !wallet.isApprovingTokens && !paperTrading && (
+      {/* No proxy wallet — creation needed */}
+      {isProbable && onBSC && !wallet.isCheckingApprovals && !wallet.isCreatingProxy && !hasProxy && !paperTrading && (
+        <div className="space-y-1.5">
+          <div className="px-3 py-2 bg-yellow-50 border-2 border-yellow-400 rounded-2xl text-xs font-bold text-yellow-700">
+            📳 A one-time proxy wallet is required by Probable to place orders.
+          </div>
+          <button
+            onClick={handleCreateProxy}
+            className="w-full py-2.5 px-4 rounded-2xl font-extrabold text-sm bg-brand-600 hover:bg-brand-700 active:translate-y-0.5 text-white border-2 border-brand-700 shadow-btn transition-all"
+          >
+            🔐 Create Proxy Wallet
+          </button>
+        </div>
+      )}
+
+      {/* Creating proxy wallet in progress */}
+      {isProbable && onBSC && wallet.isCreatingProxy && !paperTrading && (
+        <div className="flex items-center gap-2 px-3 py-2.5 bg-blue-50 border-2 border-brand-300 rounded-2xl text-xs font-bold text-brand-700">
+          <svg className="animate-spin h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          <span className="leading-snug">{wallet.proxyStep || 'Creating proxy wallet…'}</span>
+        </div>
+      )}
+
+      {/* Approvals needed (only shown once proxy exists) */}
+      {isProbable && onBSC && hasProxy && approvals && !approvals.allApproved && !wallet.isApprovingTokens && !paperTrading && (
         <div className="space-y-1.5">
           <div className="px-3 py-2 bg-yellow-50 border-2 border-yellow-400 rounded-2xl text-xs font-bold text-yellow-700">
             ⚠️ One-time token approvals required:
@@ -182,7 +256,7 @@ export function WalletConnect() {
       )}
 
       {/* All approved */}
-      {isProbable && onBSC && (approvals?.allApproved || paperTrading) && (
+      {isProbable && onBSC && hasProxy && (approvals?.allApproved || paperTrading) && (
         <div className="px-3 py-2 bg-green-50 border-2 border-green-300 rounded-2xl text-xs font-bold text-green-700">
           {paperTrading
             ? '📝 Paper mode — approvals not needed'

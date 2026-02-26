@@ -1,0 +1,48 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [
+        {
+          "header": "Origin",
+          "operation": "set",
+          "value": "https://probable.markets"
+        },
+        {
+          "header": "Referer",
+          "operation": "set",
+          "value": "https://probable.markets/"
+        }
+      ]
+    },
+    "condition": {
+      "urlFilter": "*://api.probable.markets/*",
+      "resourceTypes": ["xmlhttprequest", "other"]
+    }
+  },
+  {
+    "id": 2,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [
+        {
+          "header": "Origin",
+          "operation": "set",
+          "value": "https://probable.markets"
+        },
+        {
+          "header": "Referer",
+          "operation": "set",
+          "value": "https://probable.markets/"
+        }
+      ]
+    },
+    "condition": {
+      "urlFilter": "*://market-api.probable.markets/*",
+      "resourceTypes": ["xmlhttprequest", "other"]
+    }
+  }
+]

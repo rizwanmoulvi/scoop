@@ -1,22 +1,30 @@
 /**
  * BSC token approval helpers for Probable.markets trading.
  *
- * Before placing orders the user's EOA wallet must grant three on-chain
- * allowances on BSC mainnet (chainId 56):
+ * Before placing orders the PROXY WALLET (Gnosis Safe) must have three on-chain
+ * allowances granted on BSC mainnet (chainId 56):
  *
  *   1. USDT → CTF Token contract  (for splitting/merging positions)
  *   2. USDT → CTF Exchange        (for trading)
  *   3. CTF Tokens → CTF Exchange  (ERC-1155 setApprovalForAll)
  *
- * We route every eth_call / eth_sendTransaction through the MetaMask proxy
- * (proxyRequest) so no separate RPC endpoint is needed.
+ * IMPORTANT: The proxy wallet is the actual trader — all approvals come FROM
+ * the proxy wallet address, NOT the EOA. We execute them via Safe's
+ * execTransaction (see proxyWallet.ts executeFromProxy).
+ *
+ * Contract addresses (BSC mainnet, from developer.probable.markets):
+ *   USDT:         0x364d05055614B506e2b9A287E4ac34167204cA83
+ *   CTF Token:    0xc53a8b3bF7934fe94305Ed7f84a2ea8ce1028a12
+ *   CTF Exchange: 0xF99F5367ce708c66F0860B77B4331301A5597c86
  */
 import { proxyRequest } from './wallet'
+import { executeFromProxy } from './proxyWallet'
+import type { WalletSigner } from '../platforms/PredictionPlatform'
 
 // ─── Contract addresses (BSC mainnet) ────────────────────────────────────────
 
-const USDT_ADDRESS         = '0x55d398326f99059fF775485246999027B3197955'
-const CTF_TOKEN_ADDRESS    = '0x364d05055614B506e2b9A287E4ac34167204cA83'
+const USDT_ADDRESS         = '0x364d05055614B506e2b9A287E4ac34167204cA83'
+const CTF_TOKEN_ADDRESS    = '0xc53a8b3bF7934fe94305Ed7f84a2ea8ce1028a12'
 const CTF_EXCHANGE_ADDRESS = '0xF99F5367ce708c66F0860B77B4331301A5597c86'
 
 // Allowances >= 2^255 are treated as "effectively unlimited" (standard DeFi pattern).
@@ -42,13 +50,13 @@ function encodeIsApprovedForAllCall(owner: string, operator: string): string {
   return '0xe985e9c5' + padAddr(owner) + padAddr(operator)
 }
 
-/** approve(address spender, uint256 amount=MaxUint256) → 0x095ea7b3 */
-function encodeApproveCall(spender: string): string {
+/** approve(address spender, uint256 amount=MaxUint256) calldata — used in Safe tx */
+function encodeApproveData(spender: string): string {
   return '0x095ea7b3' + padAddr(spender) + MAX_UINT256_HEX
 }
 
-/** setApprovalForAll(address operator, bool approved=true) → 0xa22cb465 */
-function encodeSetApprovalForAllCall(operator: string): string {
+/** setApprovalForAll(address operator, bool approved=true) calldata — used in Safe tx */
+function encodeSetApprovalForAllData(operator: string): string {
   return '0xa22cb465' +
     padAddr(operator) +
     '0000000000000000000000000000000000000000000000000000000000000001'
@@ -78,21 +86,21 @@ export interface ApprovalStatus {
 }
 
 /**
- * Check the three approval states without sending any transactions.
- * Uses MetaMask eth_call → goes through BSC RPC for reads.
+ * Check the three approval states on the PROXY WALLET address.
+ * Read-only — no MetaMask confirmation needed.
  */
-export async function checkApprovals(userAddress: string): Promise<ApprovalStatus> {
+export async function checkApprovals(proxyAddress: string): Promise<ApprovalStatus> {
   const [usdtForCTF, usdtForExchange, ctfApproved] = await Promise.all([
     proxyRequest('eth_call', [
-      { to: USDT_ADDRESS, data: encodeAllowanceCall(userAddress, CTF_TOKEN_ADDRESS) },
+      { to: USDT_ADDRESS, data: encodeAllowanceCall(proxyAddress, CTF_TOKEN_ADDRESS) },
       'latest',
     ]),
     proxyRequest('eth_call', [
-      { to: USDT_ADDRESS, data: encodeAllowanceCall(userAddress, CTF_EXCHANGE_ADDRESS) },
+      { to: USDT_ADDRESS, data: encodeAllowanceCall(proxyAddress, CTF_EXCHANGE_ADDRESS) },
       'latest',
     ]),
     proxyRequest('eth_call', [
-      { to: CTF_TOKEN_ADDRESS, data: encodeIsApprovedForAllCall(userAddress, CTF_EXCHANGE_ADDRESS) },
+      { to: CTF_TOKEN_ADDRESS, data: encodeIsApprovedForAllCall(proxyAddress, CTF_EXCHANGE_ADDRESS) },
       'latest',
     ]),
   ])
@@ -110,69 +118,49 @@ export async function checkApprovals(userAddress: string): Promise<ApprovalStatu
 }
 
 /**
- * Poll for a transaction receipt until the tx is confirmed or fails.
- * Throws if the tx reverts or times out.
- */
-async function waitForReceipt(
-  txHash: string,
-  maxAttempts = 40,
-  delayMs = 3000
-): Promise<void> {
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    await new Promise<void>((r) => setTimeout(r, delayMs))
-    const receipt = (await proxyRequest('eth_getTransactionReceipt', [txHash])) as {
-      status?: string
-    } | null
-
-    if (receipt?.status === '0x1') return          // confirmed ✓
-    if (receipt?.status === '0x0') throw new Error('Approval transaction reverted on-chain')
-    // null receipt → still pending, keep polling
-  }
-  throw new Error('Approval transaction confirmation timed out after 2 minutes')
-}
-
-/**
- * Send the missing approval transactions in sequence.
- * Each transaction requires user confirmation in MetaMask.
+ * Grant missing approvals by executing Safe transactions FROM the proxy wallet.
  *
- * @param onProgress  Optional callback for UI status messages.
+ * Each approval is executed as a Gnosis Safe transaction signed by the EOA.
+ * MetaMask shows a clean EIP-712 "Sign SafeTx" modal for each.
+ *
+ * @param signer       WalletSigner wrapping the EOA.
+ * @param proxyAddress The proxy wallet (Gnosis Safe) address.
+ * @param status       Result of a previous checkApprovals() call.
+ * @param onProgress   Optional callback for UI status messages.
  */
 export async function grantApprovals(
-  userAddress: string,
+  signer: WalletSigner,
+  proxyAddress: string,
   status: ApprovalStatus,
   onProgress?: (message: string) => void
 ): Promise<void> {
   if (status.needsUSDTForCTF) {
     onProgress?.('Step 1/3 — Approve USDT for CTF Token contract…')
-    const txHash = (await proxyRequest('eth_sendTransaction', [
-      { from: userAddress, to: USDT_ADDRESS, data: encodeApproveCall(CTF_TOKEN_ADDRESS) },
-    ])) as string
-    onProgress?.('Step 1/3 — Waiting for confirmation…')
-    await waitForReceipt(txHash)
+    await executeFromProxy(
+      signer, proxyAddress, USDT_ADDRESS,
+      encodeApproveData(CTF_TOKEN_ADDRESS),
+      (msg) => onProgress?.(`Step 1/3 — ${msg}`)
+    )
     onProgress?.('Step 1/3 — Done ✓')
   }
 
   if (status.needsUSDTForExchange) {
     onProgress?.('Step 2/3 — Approve USDT for CTF Exchange…')
-    const txHash = (await proxyRequest('eth_sendTransaction', [
-      { from: userAddress, to: USDT_ADDRESS, data: encodeApproveCall(CTF_EXCHANGE_ADDRESS) },
-    ])) as string
-    onProgress?.('Step 2/3 — Waiting for confirmation…')
-    await waitForReceipt(txHash)
+    await executeFromProxy(
+      signer, proxyAddress, USDT_ADDRESS,
+      encodeApproveData(CTF_EXCHANGE_ADDRESS),
+      (msg) => onProgress?.(`Step 2/3 — ${msg}`)
+    )
     onProgress?.('Step 2/3 — Done ✓')
   }
 
   if (status.needsCTFForExchange) {
     onProgress?.('Step 3/3 — Approve CTF Tokens for Exchange…')
-    const txHash = (await proxyRequest('eth_sendTransaction', [
-      {
-        from: userAddress,
-        to: CTF_TOKEN_ADDRESS,
-        data: encodeSetApprovalForAllCall(CTF_EXCHANGE_ADDRESS),
-      },
-    ])) as string
-    onProgress?.('Step 3/3 — Waiting for confirmation…')
-    await waitForReceipt(txHash)
+    await executeFromProxy(
+      signer, proxyAddress, CTF_TOKEN_ADDRESS,
+      encodeSetApprovalForAllData(CTF_EXCHANGE_ADDRESS),
+      (msg) => onProgress?.(`Step 3/3 — ${msg}`)
+    )
     onProgress?.('Step 3/3 — Done ✓')
   }
 }

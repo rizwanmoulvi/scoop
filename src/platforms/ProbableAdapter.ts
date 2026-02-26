@@ -347,7 +347,7 @@ export class ProbableAdapter implements PredictionPlatform {
         takerAmount:   takerAmount.toString(),
         feeRateBps:    '175',
         nonce:         '0',
-        signatureType: 0,    // EOA; no proxy wallet required
+        signatureType: 0,    // EOA signs; proxy wallet is maker/owner
         taker:         '0x0000000000000000000000000000000000000000',
         tokenId:       '',   // injected by OrderForm from market.clobTokenIds
         // apiKey / apiSecret / apiPassphrase injected by OrderForm before submitOrder
@@ -364,10 +364,14 @@ export class ProbableAdapter implements PredictionPlatform {
 
     const salt = String(Math.round(Math.random() * Date.now()))
 
+    // maker = proxy wallet (passed as makerAddress from OrderForm)
+    // signer = EOA that actually signs the EIP-712 message
+    const eoaAddress = await signer.getAddress()
+
     const value = {
       salt:          BigInt(salt),
       maker:         order.makerAddress as `0x${string}`,
-      signer:        order.makerAddress as `0x${string}`,
+      signer:        eoaAddress as `0x${string}`,
       taker:         extra.taker as `0x${string}`,
       tokenId:       BigInt(extra.tokenId || '0'),
       makerAmount:   BigInt(extra.makerAmount),
@@ -432,12 +436,12 @@ export class ProbableAdapter implements PredictionPlatform {
       {
         method: 'POST',
         headers: {
-          prob_address:   eoaAddress,
-          prob_signature: l1Signature,
-          prob_timestamp: timestamp.toString(),
-          prob_nonce:     nonce.toString(),
+          'prob_address':   eoaAddress,
+          'prob_signature': l1Signature,
+          'prob_timestamp': timestamp.toString(),
+          'prob_nonce':     nonce.toString(),
         },
-        body: '{}',
+        // No request body — the auth info is entirely in the headers
       }
     )
 
@@ -505,6 +509,7 @@ export class ProbableAdapter implements PredictionPlatform {
       feeRateBps: string; nonce: string; signatureType: number
       taker?: string; tokenId?: string; salt?: string
       apiKey?: string; apiSecret?: string; apiPassphrase?: string
+      proxyAddress?: string  // injected by OrderForm
     }
 
     if (!extra.apiKey || !extra.apiSecret || !extra.apiPassphrase) {
@@ -514,15 +519,17 @@ export class ProbableAdapter implements PredictionPlatform {
       }
     }
 
-    const eoaAddress = order.makerAddress
-    const path       = `/public/api/v1/order/${BSC_CHAIN_ID}`
+    // EOA signs and authenticates; proxy wallet is the on-chain maker/owner.
+    const eoaAddress   = await _signer.getAddress()
+    const proxyAddress = extra.proxyAddress ?? order.makerAddress
+    const path         = `/public/api/v1/order/${BSC_CHAIN_ID}`
 
     const requestBody = {
       deferExec: true,
       order: {
         salt:          extra.salt ?? String(Math.round(Math.random() * Date.now())),
-        maker:         eoaAddress,
-        signer:        eoaAddress,
+        maker:         proxyAddress,   // proxy wallet
+        signer:        eoaAddress,     // EOA
         taker:         extra.taker ?? '0x0000000000000000000000000000000000000000',
         tokenId:       extra.tokenId ?? '0',
         makerAmount:   extra.makerAmount,
@@ -534,7 +541,7 @@ export class ProbableAdapter implements PredictionPlatform {
         signatureType: extra.signatureType,
         signature:     order.signature,
       },
-      owner:     eoaAddress,   // EOA address for EOA flow
+      owner:     proxyAddress,   // proxy wallet
       orderType: 'GTC',
     }
 
