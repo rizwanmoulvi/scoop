@@ -59,11 +59,17 @@ const safeIface = new ethers.Interface([
 
 async function ethCall(to: string, data: string): Promise<string> {
   // Try direct BSC RPC first, fall back to MetaMask bridge
+  let result: unknown
   try {
-    return (await rpcCall('eth_call', [{ to, data }, 'latest'])) as string
+    result = await rpcCall('eth_call', [{ to, data }, 'latest'])
   } catch {
-    return (await proxyRequest('eth_call', [{ to, data }, 'latest'])) as string
+    result = await proxyRequest('eth_call', [{ to, data }, 'latest'])
   }
+  // RPC can return null for a cold call to an undeployed address
+  if (typeof result !== 'string' || result === '0x') {
+    throw new Error(`eth_call returned empty/null result for ${to} (result: ${JSON.stringify(result)})`)
+  }
+  return result
 }
 
 // Public BSC RPC endpoints used only for read-only polling (faster than MetaMask bridge)
@@ -275,8 +281,17 @@ async function findProxyFromLogs(eoaAddress: string): Promise<string | null> {
  * Returns the proxy address string, or null if no proxy exists yet.
  */
 export async function detectProxyWallet(eoaAddress: string): Promise<string | null> {
+  console.log('[Scoop] detectProxyWallet called with eoaAddress:', eoaAddress)
+
   // Step 1 — deterministic address
-  const expected = await computeProxyAddress(eoaAddress)
+  let expected: string
+  try {
+    expected = await computeProxyAddress(eoaAddress)
+  } catch (e) {
+    console.warn('[Scoop] computeProxyAddress failed:', e)
+    // Skip to log scan — factory may not be reachable via eth_call
+    return findProxyFromLogs(eoaAddress)
+  }
   console.log('[Scoop] expected proxy address:', expected)
 
   // Step 2 — check both RPC paths in parallel
