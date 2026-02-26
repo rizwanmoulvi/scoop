@@ -53,7 +53,8 @@ const safeIface = new ethers.Interface([
 // ─── Low-level helpers ────────────────────────────────────────────────────────
 
 async function ethCall(to: string, data: string): Promise<string> {
-  return (await proxyRequest('eth_call', [{ to, data }, 'latest'])) as string
+  // Use direct BSC RPC — MetaMask may return null for eth_call from extension contexts
+  return (await rpcCall('eth_call', [{ to, data }, 'latest'])) as string
 }
 
 // Public BSC RPC endpoints used only for read-only polling (faster than MetaMask bridge)
@@ -64,16 +65,23 @@ const BSC_RPC_ENDPOINTS = [
 ]
 
 async function rpcCall(method: string, params: unknown[]): Promise<unknown> {
-  const rpc = BSC_RPC_ENDPOINTS[Math.floor(Math.random() * BSC_RPC_ENDPOINTS.length)]
-  const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
-  const res = await fetch(rpc, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-  })
-  const data = await res.json() as { result?: unknown; error?: { message?: string } }
-  if (data.error) throw new Error(data.error.message ?? 'RPC error')
-  return data.result
+  // Try all endpoints in order until one succeeds
+  const errors: string[] = []
+  for (const rpc of BSC_RPC_ENDPOINTS) {
+    try {
+      const res = await fetch(rpc, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      })
+      const data = await res.json() as { result?: unknown; error?: { message?: string } }
+      if (data.error) { errors.push(data.error.message ?? 'RPC error'); continue }
+      return data.result
+    } catch (e: unknown) {
+      errors.push(e instanceof Error ? e.message : String(e))
+    }
+  }
+  throw new Error(`All BSC RPC endpoints failed: ${errors.join('; ')}`)
 }
 
 async function waitForReceipt(
@@ -129,16 +137,13 @@ export async function computeProxyAddress(eoaAddress: string): Promise<string> {
 
 /**
  * Returns true if the proxy wallet contract is already deployed.
- * Tries MetaMask RPC first (most up-to-date), falls back to direct BSC RPC.
+ * Uses direct BSC RPC — MetaMask silently returns null for eth_getCode.
  */
 export async function proxyWalletExists(proxyAddress: string): Promise<boolean> {
-  try {
-    const code = (await proxyRequest('eth_getCode', [proxyAddress, 'latest'])) as string
-    return typeof code === 'string' && code !== '0x' && code.length > 2
-  } catch {
-    const code = (await rpcCall('eth_getCode', [proxyAddress, 'latest'])) as string
-    return typeof code === 'string' && code !== '0x' && code.length > 2
-  }
+  const code = (await rpcCall('eth_getCode', [proxyAddress, 'latest'])) as string
+  const exists = typeof code === 'string' && code !== '0x' && code.length > 2
+  console.log(`[Scoop] proxyWalletExists(${proxyAddress.slice(0,8)}…) =`, exists, 'code.length =', code?.length)
+  return exists
 }
 
 /**

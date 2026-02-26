@@ -50,7 +50,9 @@ export function WalletConnect() {
     async (eoaAddress: string) => {
       try {
         const proxyAddr = await computeProxyAddress(eoaAddress)
+        console.log('[Scoop] computed proxy address:', proxyAddr)
         const exists = await proxyWalletExists(proxyAddr)
+        console.log('[Scoop] proxy exists:', exists)
         if (exists) {
           setWallet({ proxyAddress: proxyAddr })
           await refreshApprovals(proxyAddr)

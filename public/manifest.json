@@ -20,7 +20,11 @@
     "https://market-api.probable.markets/*",
     "https://api.probable.markets/*",
     "https://app.predict.fun/*",
-    "https://app.opinion.trade/*"
+    "https://app.opinion.trade/*",
+    "https://bsc-dataseed1.binance.org/*",
+    "https://bsc-dataseed2.binance.org/*",
+    "https://bsc-dataseed1.defibit.io/*",
+    "https://bsc-dataseed2.defibit.io/*"
   ],
   "background": {
     "service_worker": "background/background.js",
