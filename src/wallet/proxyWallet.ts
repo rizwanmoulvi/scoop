@@ -170,6 +170,7 @@ export async function createProxyWallet(
     from: eoaAddress,
     to:   PROXY_WALLET_FACTORY,
     data: calldata,
+    gas:  '0x47E00',  // 294,400 — enough for Safe proxy deployment on BSC
   }])) as string
 
   onProgress?.('Waiting for proxy wallet creation to confirm…')
@@ -273,6 +274,7 @@ export async function executeFromProxy(
     from: eoaAddress,
     to:   proxyAddress,
     data: calldata,
+    gas:  '0x1D4C0',  // 120,000 — enough for Safe execTransaction on BSC
   }])) as string
 
   onProgress?.('Waiting for confirmation…')
