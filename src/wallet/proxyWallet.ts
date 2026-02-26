@@ -129,14 +129,14 @@ export async function computeProxyAddress(eoaAddress: string): Promise<string> {
 
 /**
  * Returns true if the proxy wallet contract is already deployed.
+ * Tries MetaMask RPC first (most up-to-date), falls back to direct BSC RPC.
  */
 export async function proxyWalletExists(proxyAddress: string): Promise<boolean> {
   try {
-    const code = (await rpcCall('eth_getCode', [proxyAddress, 'latest'])) as string
+    const code = (await proxyRequest('eth_getCode', [proxyAddress, 'latest'])) as string
     return typeof code === 'string' && code !== '0x' && code.length > 2
   } catch {
-    // Fallback to MetaMask proxy if direct RPC fails
-    const code = (await proxyRequest('eth_getCode', [proxyAddress, 'latest'])) as string
+    const code = (await rpcCall('eth_getCode', [proxyAddress, 'latest'])) as string
     return typeof code === 'string' && code !== '0x' && code.length > 2
   }
 }
@@ -192,14 +192,9 @@ export async function createProxyWallet(
   onProgress?.('Sent — waiting for BSC confirmation…')
   await waitForReceipt(txHash, onProgress)
 
-  // RPC nodes may lag slightly after confirmation — retry a few times
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    await new Promise<void>((r) => setTimeout(r, 3000))
-    if (await proxyWalletExists(proxyAddress)) return proxyAddress
-    onProgress?.(`Confirming proxy deployment (attempt ${attempt}/5)…`)
-  }
-
-  throw new Error('Proxy wallet not found after transaction confirmed — check BSCScan for the tx status')
+  // Transaction confirmed with status 0x1 — the proxy is deployed.
+  // We trust the receipt; don't re-check eth_getCode (public RPC nodes lag).
+  return proxyAddress
 }
 
 // ─── Safe transaction execution ───────────────────────────────────────────────
