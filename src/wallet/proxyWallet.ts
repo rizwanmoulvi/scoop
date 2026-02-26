@@ -58,16 +58,48 @@ async function ethCall(to: string, data: string): Promise<string> {
   return (await proxyRequest('eth_call', [{ to, data }, 'latest'])) as string
 }
 
-async function waitForReceipt(txHash: string, maxAttempts = 40, delayMs = 3000): Promise<void> {
+// Public BSC RPC endpoints used only for read-only polling (faster than MetaMask bridge)
+const BSC_RPC_ENDPOINTS = [
+  'https://bsc-dataseed1.binance.org',
+  'https://bsc-dataseed2.binance.org',
+  'https://bsc-dataseed1.defibit.io',
+]
+
+async function rpcCall(method: string, params: unknown[]): Promise<unknown> {
+  const rpc = BSC_RPC_ENDPOINTS[Math.floor(Math.random() * BSC_RPC_ENDPOINTS.length)]
+  const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
+  const res = await fetch(rpc, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  })
+  const data = await res.json() as { result?: unknown; error?: { message?: string } }
+  if (data.error) throw new Error(data.error.message ?? 'RPC error')
+  return data.result
+}
+
+async function waitForReceipt(
+  txHash: string,
+  onProgress?: (msg: string) => void,
+  maxAttempts = 40,
+  delayMs = 3000
+): Promise<void> {
   for (let i = 0; i < maxAttempts; i++) {
     await new Promise<void>((r) => setTimeout(r, delayMs))
-    const receipt = (await proxyRequest('eth_getTransactionReceipt', [txHash])) as {
-      status?: string
-    } | null
-    if (receipt?.status === '0x1') return
-    if (receipt?.status === '0x0') throw new Error('Transaction reverted on-chain')
+    const elapsed = Math.round(((i + 1) * delayMs) / 1000)
+    onProgress?.(`Waiting for confirmation… ${elapsed}s — check BSCScan: bscscan.com/tx/${txHash.slice(0, 10)}…`)
+    try {
+      const receipt = (await rpcCall('eth_getTransactionReceipt', [txHash])) as {
+        status?: string
+      } | null
+      if (receipt?.status === '0x1') return
+      if (receipt?.status === '0x0') throw new Error('Transaction reverted — check BSCScan for details: bscscan.com/tx/' + txHash)
+    } catch (e: unknown) {
+      // Ignore transient RPC fetch errors and keep polling
+      if (e instanceof Error && e.message.startsWith('Transaction reverted')) throw e
+    }
   }
-  throw new Error('Transaction confirmation timed out after 2 minutes')
+  throw new Error(`Transaction not confirmed after 2 minutes — check BSCScan: bscscan.com/tx/${txHash}`)
 }
 
 /** Normalize v to 27/28 */
@@ -101,8 +133,14 @@ export async function computeProxyAddress(eoaAddress: string): Promise<string> {
  * Returns true if the proxy wallet contract is already deployed.
  */
 export async function proxyWalletExists(proxyAddress: string): Promise<boolean> {
-  const code = (await proxyRequest('eth_getCode', [proxyAddress, 'latest'])) as string
-  return typeof code === 'string' && code !== '0x' && code.length > 2
+  try {
+    const code = (await rpcCall('eth_getCode', [proxyAddress, 'latest'])) as string
+    return typeof code === 'string' && code !== '0x' && code.length > 2
+  } catch {
+    // Fallback to MetaMask proxy if direct RPC fails
+    const code = (await proxyRequest('eth_getCode', [proxyAddress, 'latest'])) as string
+    return typeof code === 'string' && code !== '0x' && code.length > 2
+  }
 }
 
 /**
@@ -173,8 +211,8 @@ export async function createProxyWallet(
     gas:  '0x47E00',  // 294,400 — enough for Safe proxy deployment on BSC
   }])) as string
 
-  onProgress?.('Waiting for proxy wallet creation to confirm…')
-  await waitForReceipt(txHash)
+  onProgress?.('Sent — waiting for BSC confirmation…')
+  await waitForReceipt(txHash, onProgress)
 
   // The RPC node may lag behind the chain tip slightly — retry the existence
   // check up to 5 times with a 3-second gap before declaring failure.
@@ -277,8 +315,8 @@ export async function executeFromProxy(
     gas:  '0x1D4C0',  // 120,000 — enough for Safe execTransaction on BSC
   }])) as string
 
-  onProgress?.('Waiting for confirmation…')
-  await waitForReceipt(txHash)
+  onProgress?.('Sent — waiting for BSC confirmation…')
+  await waitForReceipt(txHash, onProgress)
 }
 
 // Export SAFE_TX_TYPEHASH for use in tests / diagnostics
