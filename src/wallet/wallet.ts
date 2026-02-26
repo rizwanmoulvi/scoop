@@ -19,17 +19,39 @@ import type { WalletSigner } from '../platforms/PredictionPlatform'
  */
 export function proxyRequest(method: string, params: unknown[] = []): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(
-      { type: 'WALLET_REQUEST', method, params },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message))
-          return
+    // Catch synchronous throws (e.g. context invalidated before sendMessage fires)
+    let sent = false
+    try {
+      chrome.runtime.sendMessage(
+        { type: 'WALLET_REQUEST', method, params },
+        (response) => {
+          const err = chrome.runtime.lastError?.message ?? ''
+          if (err) {
+            if (
+              err.includes('Extension context invalidated') ||
+              err.includes('Could not establish connection') ||
+              err.includes('message port closed')
+            ) {
+              reject(new Error('⚠️ Extension was reloaded — please refresh this Twitter tab and try again.'))
+            } else {
+              reject(new Error(err))
+            }
+            return
+          }
+          if (response?.error) reject(new Error(response.error))
+          else resolve(response?.result)
         }
-        if (response?.error) reject(new Error(response.error))
-        else resolve(response?.result)
+      )
+      sent = true
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (msg.includes('Extension context invalidated') || msg.includes('invalidated')) {
+        reject(new Error('⚠️ Extension was reloaded — please refresh this Twitter tab and try again.'))
+      } else {
+        reject(e instanceof Error ? e : new Error(msg))
       }
-    )
+    }
+    if (!sent) return // already rejected above
   })
 }
 

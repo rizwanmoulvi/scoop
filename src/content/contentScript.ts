@@ -46,8 +46,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type !== 'WALLET_REQUEST') return false
 
   callBridge(message.method, message.params ?? [])
-    .then((result) => sendResponse({ result }))
-    .catch((err: unknown) => sendResponse({ error: err instanceof Error ? err.message : String(err) }))
+    .then((result) => {
+      try { sendResponse({ result }) } catch { /* context invalidated — panel will time out */ }
+    })
+    .catch((err: unknown) => {
+      try { sendResponse({ error: err instanceof Error ? err.message : String(err) }) } catch { /* context invalidated */ }
+    })
 
   return true // keep channel open for async response
 })
