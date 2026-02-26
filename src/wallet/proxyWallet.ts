@@ -155,12 +155,14 @@ export async function createProxyWallet(
     ethers.concat([new Uint8Array([0x19, 0x01]), domainSeparator, structHash])
   )
 
-  // Sign the raw message hash via personal_sign.
-  // This matches viem's signMessage({ message: { raw: toBytes(messageHash) } }).
-  // MetaMask prepends "\x19Ethereum Signed Message:\n32" so the factory
-  // verifies with toEthSignedMessageHash(messageHash).
+  // Sign the pre-computed EIP-712 final hash via eth_sign (raw signing — no extra prefix).
+  // The factory verifies with ecrecover(messageHash, sig) directly, so we must NOT
+  // use personal_sign (which adds "\x19Ethereum Signed Message:\n32" causing a different
+  // recovered address and a silent sig-check failure that lets the tx confirm but
+  // never deploys the proxy).
+  // eth_sign(address, hash) → MetaMask signs the hash as-is (no prefix).
   onProgress?.('Sign the proxy wallet creation in MetaMask…')
-  const signature = (await proxyRequest('personal_sign', [messageHash, eoaAddress.toLowerCase()])) as string
+  const signature = (await proxyRequest('eth_sign', [eoaAddress.toLowerCase(), messageHash])) as string
 
   const { v, r, s } = splitSig(signature)
 
