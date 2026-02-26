@@ -292,28 +292,47 @@ export class ProbableAdapter implements PredictionPlatform {
    * (EOA signs directly).  Switch to 1 once the proxy wallet is deployed.
    */
   buildOrder(params: TradeInput): Order {
-    const SCALE = BigInt('1000000000000000000') // 1e18
+    const side   = params.outcome === 'YES' ? 0 : 1
+    const amount = parseFloat(params.amount)  // USDC to spend (BUY) or receive (SELL)
 
-    const side = params.outcome === 'YES' ? 0 : 1
+    // Clamp price and round to 0.01 tick size (2 decimal places)
+    const price = Math.round(Math.min(Math.max(params.price, 0.0001), 0.9999) * 100) / 100
 
-    const price  = Math.min(Math.max(params.price, 0.001), 0.999)
-    const amount = parseFloat(params.amount)   // USDT, human-readable
+    // --- Compute BUY / SELL amounts following the Probable tick-size spec ----
+    //
+    // BUY:  user spends `amount` USDC, receives `amount / price` tokens
+    //   makerAmount = USDC to spend    = round(amount, 4 dp)
+    //   takerAmount = tokens received  = roundDown(amount / price, 2 dp)
+    //
+    // SELL: user spends `amount / price` tokens, receives `amount` USDC
+    //   makerAmount = tokens to spend  = roundDown(amount / price, 2 dp)
+    //   takerAmount = USDC to receive  = round(amount, 4 dp)
+    //
+    // Both values are then converted to 18-decimal bigints (BSC USDT = 18 dec).
+    // -------------------------------------------------------------------------
 
-    // Convert to 18-decimal integers
-    const amountWei = BigInt(Math.round(amount * 1e6)) * (SCALE / 1_000_000n)
-    const priceWei  = BigInt(Math.round(price  * 1e6)) * (SCALE / 1_000_000n)
+    const roundDown2 = (n: number) => Math.floor(n * 100)       / 100
+    const round4     = (n: number) => Math.round(n * 10_000)    / 10_000
 
-    let makerAmount: bigint
-    let takerAmount: bigint
+    const tokens = roundDown2(amount / price)  // number of CTF tokens
+
+    let rawMakerAmt: number
+    let rawTakerAmt: number
+
     if (side === 0) {
-      // BUY: spend (price × size) USDT, receive size tokens
-      makerAmount = (amountWei * priceWei) / SCALE
-      takerAmount = amountWei
+      // BUY: spend USDC → receive tokens
+      rawMakerAmt = round4(tokens * price)   // USDC actually spent (= price × tokens)
+      rawTakerAmt = tokens                    // tokens received
     } else {
-      // SELL: spend size tokens, receive (price × size) USDT
-      makerAmount = amountWei
-      takerAmount = (amountWei * priceWei) / SCALE
+      // SELL: spend tokens → receive USDC
+      rawMakerAmt = tokens                    // tokens spent
+      rawTakerAmt = round4(tokens * price)   // USDC received
     }
+
+    // Convert to 18-decimal bigints  (n × 1e6 × 1e12 = n × 1e18)
+    const toWei = (n: number): bigint => BigInt(Math.round(n * 1_000_000)) * 1_000_000_000_000n
+    const makerAmount = toWei(rawMakerAmt)
+    const takerAmount = toWei(rawTakerAmt)
 
     return {
       marketId:     params.marketId,
@@ -328,10 +347,10 @@ export class ProbableAdapter implements PredictionPlatform {
         takerAmount:   takerAmount.toString(),
         feeRateBps:    '175',
         nonce:         '0',
-        signatureType: 0,
+        signatureType: 0,    // EOA; no proxy wallet required
         taker:         '0x0000000000000000000000000000000000000000',
-        // tokenId must be set by Panel/OrderForm from market.clobTokenIds before signing
-        tokenId: '',
+        tokenId:       '',   // injected by OrderForm from market.clobTokenIds
+        // apiKey / apiSecret / apiPassphrase injected by OrderForm before submitOrder
       },
     }
   }
@@ -365,19 +384,145 @@ export class ProbableAdapter implements PredictionPlatform {
     return { ...order, signature, signedAt: Math.floor(Date.now() / 1000), extra: { ...extra, salt } }
   }
 
+  // ── L1 Authentication ─────────────────────────────────────────────────────
+
+  /**
+   * Obtain a Probable L2 API key using an EIP-712 L1 signature (ClobAuthDomain).
+   *
+   * This triggers ONE MetaMask signature prompt (no gas, no transaction).
+   * Cache the returned credentials in the panel store and reuse them for the
+   * rest of the session.
+   *
+   * Spec: POST /public/api/v1/auth/api-key/{chainId}
+   *   Headers: prob_address, prob_signature, prob_timestamp, prob_nonce
+   */
+  async getApiKey(
+    signer: WalletSigner
+  ): Promise<{ key: string; secret: string; passphrase: string }> {
+    const eoaAddress = await signer.getAddress()
+    const timestamp  = Math.floor(Date.now() / 1000)
+    const nonce      = 0
+
+    // ClobAuthDomain has NO verifyingContract — ProxySigner handles this
+    // dynamically by only including domain fields that are present.
+    const domain = {
+      name:    'ClobAuthDomain',
+      version: '1',
+      chainId: BSC_CHAIN_ID,
+    }
+    const types = {
+      ClobAuth: [
+        { name: 'address',   type: 'address' },
+        { name: 'timestamp', type: 'string'  },
+        { name: 'nonce',     type: 'uint256' },
+        { name: 'message',   type: 'string'  },
+      ],
+    }
+    const value = {
+      address:   eoaAddress,
+      timestamp: timestamp.toString(),
+      nonce,
+      message:   'This message attests that I control the given wallet',
+    }
+
+    const l1Signature = await signer.signTypedData(domain, types, value)
+
+    const response = await apiFetch<{ apiKey: string; secret: string; passphrase: string }>(
+      `${this.orderbookApiBase}/auth/api-key/${BSC_CHAIN_ID}`,
+      {
+        method: 'POST',
+        headers: {
+          prob_address:   eoaAddress,
+          prob_signature: l1Signature,
+          prob_timestamp: timestamp.toString(),
+          prob_nonce:     nonce.toString(),
+        },
+        body: '{}',
+      }
+    )
+
+    return { key: response.apiKey, secret: response.secret, passphrase: response.passphrase }
+  }
+
+  // ── L2 HMAC signature ────────────────────────────────────────────────────
+
+  /**
+   * Build the L2 HMAC-SHA256 request signature required by authenticated
+   * Probable endpoints (e.g. POST /order/{chainId}).
+   *
+   * message  = `${timestamp}${method}${path}${body}`
+   * signature = URL-safe Base64( HMAC-SHA256(base64Decode(secret), message) )
+   *
+   * Uses the Web Crypto API (crypto.subtle) — available in Chrome extensions,
+   * service workers, and all modern browsers.
+   */
+  private async buildL2Signature(
+    secret: string,
+    timestamp: number,
+    method: string,
+    path: string,
+    body: string
+  ): Promise<string> {
+    const message = `${timestamp}${method}${path}${body}`
+
+    // The secret is standard base64 (may include + and /). normalise before atob().
+    const fixedSecret = secret.replace(/-/g, '+').replace(/_/g, '/')
+    const secretBytes = Uint8Array.from(atob(fixedSecret), (c) => c.charCodeAt(0))
+
+    const key = await crypto.subtle.importKey(
+      'raw',
+      secretBytes,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    )
+
+    const msgBytes  = new TextEncoder().encode(message)
+    const sigBuffer = await crypto.subtle.sign('HMAC', key, msgBytes)
+
+    // Convert ArrayBuffer → URL-safe Base64
+    const array = new Uint8Array(sigBuffer)
+    let binary  = ''
+    for (const byte of array) binary += String.fromCharCode(byte)
+
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_')
+  }
+
+  // ── Order submission ─────────────────────────────────────────────────────
+
+  /**
+   * Submit a signed order to the Probable Orderbook API.
+   *
+   * Requires L2 HMAC authentication headers.  The OrderForm must inject
+   * apiKey / apiSecret / apiPassphrase into order.extra (obtained via
+   * getApiKey()) before calling this method.
+   *
+   * Uses EOA flow (signatureType=0, prob_account_type='eoa').
+   */
   async submitOrder(order: SignedOrder, _signer: WalletSigner): Promise<ApiResponse> {
     const extra = order.extra as {
       side: number; makerAmount: string; takerAmount: string
       feeRateBps: string; nonce: string; signatureType: number
       taker?: string; tokenId?: string; salt?: string
+      apiKey?: string; apiSecret?: string; apiPassphrase?: string
     }
 
-    const body = {
+    if (!extra.apiKey || !extra.apiSecret || !extra.apiPassphrase) {
+      return {
+        success: false,
+        message: 'API credentials missing. Please authenticate before placing an order.',
+      }
+    }
+
+    const eoaAddress = order.makerAddress
+    const path       = `/public/api/v1/order/${BSC_CHAIN_ID}`
+
+    const requestBody = {
       deferExec: true,
       order: {
         salt:          extra.salt ?? String(Math.round(Math.random() * Date.now())),
-        maker:         order.makerAddress,
-        signer:        order.makerAddress,
+        maker:         eoaAddress,
+        signer:        eoaAddress,
         taker:         extra.taker ?? '0x0000000000000000000000000000000000000000',
         tokenId:       extra.tokenId ?? '0',
         makerAmount:   extra.makerAmount,
@@ -389,21 +534,35 @@ export class ProbableAdapter implements PredictionPlatform {
         signatureType: extra.signatureType,
         signature:     order.signature,
       },
-      owner:     order.makerAddress,
+      owner:     eoaAddress,   // EOA address for EOA flow
       orderType: 'GTC',
     }
 
-    // Note: order submission requires L2 HMAC auth headers.
-    // The panel must generate an API key via L1 EIP-712 flow first.
-    // Without auth headers the API returns 401 — the panel handles that error.
+    const bodyString = JSON.stringify(requestBody)
+    const timestamp  = Math.floor(Date.now() / 1000)
+    const l2Sig      = await this.buildL2Signature(
+      extra.apiSecret, timestamp, 'POST', path, bodyString
+    )
+
     try {
       const data = await apiFetch<Record<string, unknown>>(
         `${this.orderbookApiBase}/order/${BSC_CHAIN_ID}`,
-        { method: 'POST', body: JSON.stringify(body) }
+        {
+          method: 'POST',
+          headers: {
+            prob_address:      eoaAddress,
+            prob_signature:    l2Sig,
+            prob_timestamp:    timestamp.toString(),
+            prob_api_key:      extra.apiKey,
+            prob_passphrase:   extra.apiPassphrase,
+            prob_account_type: 'eoa',
+          },
+          body: bodyString,
+        }
       )
       return {
         success: true,
-        orderId: String(data.orderId ?? ''),
+        orderId: String(data.orderId ?? data.id ?? ''),
         txHash:  data.txHash as string | undefined,
         message: 'Order accepted',
         raw:     data,
@@ -414,4 +573,3 @@ export class ProbableAdapter implements PredictionPlatform {
     }
   }
 }
-

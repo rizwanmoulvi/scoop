@@ -2,12 +2,31 @@ import { create } from 'zustand'
 import type { DetectedMarket, Market, OrderBook } from '../types/market'
 import type { Outcome } from '../types/market'
 import type { OrderState } from '../types/order'
+import type { ApprovalStatus } from '../wallet/approvals'
+
+// ─── Wallet ───────────────────────────────────────────────────────────────────
+
+export interface ApiCredentials {
+  key: string
+  secret: string
+  passphrase: string
+}
 
 export interface WalletState {
   address: string | null
   chainId: number | null
   isConnecting: boolean
   error: string | null
+  /** Cached L2 API credentials (valid for this session) */
+  apiKey: ApiCredentials | null
+  /** BSC token approval state (populated after wallet connect) */
+  approvals: ApprovalStatus | null
+  /** True while checkApprovals() is running */
+  isCheckingApprovals: boolean
+  /** True while grantApprovals() is running */
+  isApprovingTokens: boolean
+  /** Status text shown during approval flow */
+  approvalStep: string
 }
 
 export interface AppStore {
@@ -15,6 +34,8 @@ export interface AppStore {
   wallet: WalletState
   setWallet: (wallet: Partial<WalletState>) => void
   resetWallet: () => void
+  setApiKey: (apiKey: ApiCredentials | null) => void
+  setApprovals: (approvals: ApprovalStatus | null) => void
 
   // ─── Active Market ────────────────────────────────────────────────────────
   detectedMarket: DetectedMarket | null
@@ -38,6 +59,11 @@ export interface AppStore {
   order: OrderState
   setOrder: (o: Partial<OrderState>) => void
   resetOrder: () => void
+
+  // ─── Paper Trading ────────────────────────────────────────────────────────
+  /** When true, orders are signed but never sent to the API */
+  paperTrading: boolean
+  setPaperTrading: (v: boolean) => void
 }
 
 const DEFAULT_WALLET: WalletState = {
@@ -45,6 +71,11 @@ const DEFAULT_WALLET: WalletState = {
   chainId: null,
   isConnecting: false,
   error: null,
+  apiKey: null,
+  approvals: null,
+  isCheckingApprovals: false,
+  isApprovingTokens: false,
+  approvalStep: '',
 }
 
 const DEFAULT_ORDER: OrderState = {
@@ -57,6 +88,10 @@ export const useStore = create<AppStore>((set) => ({
   setWallet: (wallet) =>
     set((s) => ({ wallet: { ...s.wallet, ...wallet } })),
   resetWallet: () => set({ wallet: DEFAULT_WALLET }),
+  setApiKey: (apiKey) =>
+    set((s) => ({ wallet: { ...s.wallet, apiKey } })),
+  setApprovals: (approvals) =>
+    set((s) => ({ wallet: { ...s.wallet, approvals } })),
 
   // ─── Active Market ────────────────────────────────────────────────────────
   detectedMarket: null,
@@ -80,4 +115,8 @@ export const useStore = create<AppStore>((set) => ({
   order: DEFAULT_ORDER,
   setOrder: (o) => set((s) => ({ order: { ...s.order, ...o } })),
   resetOrder: () => set({ order: DEFAULT_ORDER }),
+
+  // ─── Paper Trading ────────────────────────────────────────────────────────
+  paperTrading: false,
+  setPaperTrading: (paperTrading) => set({ paperTrading }),
 }))

@@ -68,7 +68,7 @@ function useMarketLoader(detected: DetectedMarket) {
 export function Panel({ market, onClose }: PanelProps) {
   useMarketLoader(market)
 
-  const { detectedMarket, order, wallet } = useStore()
+  const { detectedMarket, order, wallet, paperTrading, setPaperTrading } = useStore()
   const hasRealMarket = detectedMarket && detectedMarket.marketId !== '_platform'
   const showOrderForm = hasRealMarket && wallet.address && order.status !== 'success'
 
@@ -83,14 +83,34 @@ export function Panel({ market, onClose }: PanelProps) {
         <span className="text-xl"></span>
         <h1 className="text-base font-extrabold text-white tracking-tight">Scoop</h1>
         <span className="ml-2 text-xs font-bold text-blue-200 bg-brand-700 px-2 py-0.5 rounded-full">beta</span>
+        {/* Paper trading toggle */}
+        <button
+          onClick={() => setPaperTrading(!paperTrading)}
+          title={paperTrading ? 'Disable paper trading' : 'Enable paper trading (no real money)'}
+          className={`ml-auto flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-extrabold border-2 transition-all ${
+            paperTrading
+              ? 'bg-amber-400 border-amber-500 text-amber-900'
+              : 'bg-white/10 border-white/20 text-white/70 hover:bg-white/20'
+          }`}
+        >
+          📝 {paperTrading ? 'PAPER' : 'Paper'}
+        </button>
         <button
           onClick={onClose}
           aria-label="Close panel"
-          className="ml-auto w-7 h-7 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-white font-bold text-sm transition-colors"
+          className="w-7 h-7 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-white font-bold text-sm transition-colors"
         >
           ✕
         </button>
       </header>
+
+      {/* Paper trading banner */}
+      {paperTrading && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-amber-400 border-b-2 border-amber-500 shrink-0">
+          <span className="text-sm">📝</span>
+          <span className="text-xs font-extrabold text-amber-900">PAPER TRADING ON — orders are signed but never submitted</span>
+        </div>
+      )}
 
       {/* Content */}
       <main className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scrollbar-thin bg-[#f0f4ff]">

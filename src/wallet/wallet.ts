@@ -51,15 +51,22 @@ export class ProxySigner implements WalletSigner {
     types: Record<string, Array<{ name: string; type: string }>>,
     value: Record<string, unknown>
   ): Promise<string> {
+    // Build EIP712Domain types dynamically — only include fields that are
+    // actually present in the domain object.  ClobAuthDomain has no
+    // verifyingContract; the CTF Exchange domain does.  MetaMask rejects
+    // typed-data where EIP712Domain lists a field that is absent from the value.
+    const ALL_DOMAIN_FIELDS = [
+      { name: 'name',              type: 'string'  },
+      { name: 'version',           type: 'string'  },
+      { name: 'chainId',           type: 'uint256' },
+      { name: 'verifyingContract', type: 'address' },
+    ]
+    const EIP712Domain = ALL_DOMAIN_FIELDS.filter(f => domain[f.name] !== undefined)
+
     // eth_signTypedData_v4 payload (EIP-712 JSON format)
     const typedData = {
       types: {
-        EIP712Domain: [
-          { name: 'name', type: 'string' },
-          { name: 'version', type: 'string' },
-          { name: 'chainId', type: 'uint256' },
-          { name: 'verifyingContract', type: 'address' },
-        ],
+        EIP712Domain,
         ...types,
       },
       primaryType: Object.keys(types)[0],

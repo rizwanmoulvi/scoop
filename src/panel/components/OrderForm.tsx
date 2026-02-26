@@ -2,6 +2,7 @@ import React from 'react'
 import { useStore } from '../store'
 import type { Outcome } from '../../types/market'
 import { getAdapter } from '../../platforms'
+import type { ProbableAdapter } from '../../platforms/ProbableAdapter'
 import { connectWallet, ProxySigner } from '../../wallet/wallet'
 import { buildExpiration } from '../../utils/eip712'
 
@@ -49,19 +50,26 @@ export function OrderForm() {
     selectedOutcome,
     amount,
     order,
+    paperTrading,
     setSelectedOutcome,
     setAmount,
     setOrder,
     resetOrder,
+    setApiKey,
   } = useStore()
 
   const isConnected = Boolean(wallet.address)
+  const isProbable  = detectedMarket?.platform === 'probable'
+  // In paper trading mode, approvals are not required
+  const approvalsOk = !isProbable || paperTrading || Boolean(wallet.approvals?.allApproved)
+
   const canSubmit =
     isConnected &&
     detectedMarket !== null &&
     amount !== '' &&
     parseFloat(amount) > 0 &&
-    order.status === 'idle'
+    order.status === 'idle' &&
+    approvalsOk
 
   // Use bestAsk from orderbook if valid (>0 and <1), otherwise fall back to midpoint probability.
   const yesMid = market?.probability ?? 0.5
@@ -114,8 +122,37 @@ export function OrderForm() {
         ? new ProxySigner(wallet.address)
         : (await connectWallet()).signer
 
+      // For Probable: obtain L1 API credentials (cached after first sign).
+      if (detectedMarket.platform === 'probable') {
+        let creds = wallet.apiKey
+        if (!creds) {
+          const probableAdapter = adapter as ProbableAdapter
+          creds = await probableAdapter.getApiKey(signer)
+          setApiKey(creds)
+        }
+        const extra = unsignedOrder.extra as Record<string, unknown>
+        extra.apiKey        = creds.key
+        extra.apiSecret     = creds.secret
+        extra.apiPassphrase = creds.passphrase
+      }
+
       const signedOrder = await adapter.signOrder(unsignedOrder, signer)
       setOrder({ signedOrder, status: 'submitting' })
+
+      // Paper trading: skip the real API call, simulate success
+      if (paperTrading) {
+        const paperId = `PAPER-${Date.now()}`
+        console.info(
+          '[Scoop 📝 Paper Trade] Signed order payload (NOT submitted):',
+          JSON.stringify(signedOrder, null, 2)
+        )
+        await new Promise((r) => setTimeout(r, 600)) // brief fake delay
+        setOrder({
+          response: { success: true, orderId: paperId, message: `Paper trade simulated (${paperId})` },
+          status: 'success',
+        })
+        return
+      }
 
       const response = await adapter.submitOrder(signedOrder, signer)
       setOrder({ response, status: response.success ? 'success' : 'error', error: response.message })
@@ -190,19 +227,31 @@ export function OrderForm() {
         </div>
       )}
 
+      {/* Approvals gate for Probable */}
+      {isProbable && !approvalsOk && (
+        <div className="px-3 py-2 bg-yellow-50 border-2 border-yellow-400 rounded-2xl text-xs font-bold text-yellow-700">
+          ⚠️ Approve tokens above before placing an order
+        </div>
+      )}
+
       {/* Submit */}
       <button
         onClick={handleSubmit}
         disabled={!canSubmit}
-        className="w-full py-3 rounded-2xl font-extrabold text-sm border-2 border-orange-600 shadow-btn-orange transition-all active:translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed bg-orange-500 hover:bg-orange-600 text-white"
+        className={`w-full py-3 rounded-2xl font-extrabold text-sm border-2 shadow-btn-orange transition-all active:translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed ${
+          paperTrading
+            ? 'bg-amber-400 hover:bg-amber-500 border-amber-500 text-amber-900'
+            : 'bg-orange-500 hover:bg-orange-600 border-orange-600 text-white'
+        }`}
       >
-        {order.status === 'building' && 'Building order…'}
-        {order.status === 'signing' && 'Sign in MetaMask…'}
-        {order.status === 'submitting' && 'Submitting…'}
-        {order.status === 'idle' &&
-          `Confirm ${selectedOutcome} · $${amount || '0'}`}
-        {order.status === 'success' && '✓ Order Placed!'}
-        {order.status === 'error' && 'Retry'}
+        {order.status === 'building'   && 'Building order…'}
+        {order.status === 'signing'    && 'Sign in MetaMask…'}
+        {order.status === 'submitting' && (paperTrading ? 'Simulating…' : 'Submitting…')}
+        {order.status === 'idle'       && (paperTrading
+          ? `📝 Paper ${selectedOutcome} · $${amount || '0'}`
+          : `Confirm ${selectedOutcome} · $${amount || '0'}`)}
+        {order.status === 'success'    && (paperTrading ? '✓ Paper Trade Simulated!' : '✓ Order Placed!')}
+        {order.status === 'error'      && 'Retry'}
       </button>
     </div>
   )
