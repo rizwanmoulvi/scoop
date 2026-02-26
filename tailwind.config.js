@@ -5,24 +5,40 @@ export default {
     extend: {
       colors: {
         brand: {
-          50: '#eff6ff',
+          50:  '#eff6ff',
           100: '#dbeafe',
-          500: '#3b82f6',
-          600: '#2563eb',
-          700: '#1d4ed8',
-          900: '#1e3a8a',
+          400: '#4f8ef7',
+          500: '#1a6fff',
+          600: '#0052e0',
+          700: '#003db5',
+          900: '#00257a',
         },
         yes: {
-          DEFAULT: '#22c55e',
-          dark: '#16a34a',
+          DEFAULT: '#0052e0',
+          dark:    '#003db5',
         },
         no: {
-          DEFAULT: '#ef4444',
-          dark: '#dc2626',
+          DEFAULT: '#ff6b00',
+          dark:    '#e05e00',
+        },
+        ink: {
+          DEFAULT: '#0a1f5c',
+          light:   '#2a4480',
+          muted:   '#6b7eb3',
         },
       },
       fontFamily: {
-        sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+        sans: ['Nunito', 'Fredoka One', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+      },
+      borderRadius: {
+        xl:  '0.75rem',
+        '2xl': '1rem',
+        '3xl': '1.5rem',
+      },
+      boxShadow: {
+        card:   '4px 4px 0px 0px rgba(0,82,224,0.18)',
+        btn:    '3px 3px 0px 0px rgba(0,0,0,0.20)',
+        'btn-orange': '3px 3px 0px 0px rgba(180,60,0,0.30)',
       },
     },
   },

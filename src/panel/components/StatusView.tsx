@@ -23,74 +23,74 @@ export function StatusView() {
 
   return (
     <div
-      className={`rounded-lg border p-3 text-sm space-y-2 ${
+      className={`rounded-2xl border-2 p-4 text-sm space-y-2 shadow-card ${
         isSuccess
-          ? 'bg-green-900/30 border-green-700/40'
+          ? 'bg-green-50 border-green-400'
           : isError
-          ? 'bg-red-900/30 border-red-700/40'
-          : 'bg-blue-900/20 border-blue-700/30'
+          ? 'bg-red-50 border-red-400'
+          : 'bg-blue-50 border-brand-300'
       }`}
     >
       {/* Status line */}
       <div className="flex items-center gap-2">
         {isPending && (
-          <svg className="animate-spin h-4 w-4 text-blue-400" viewBox="0 0 24 24" fill="none">
+          <svg className="animate-spin h-5 w-5 text-brand-500" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
           </svg>
         )}
-        {isSuccess && <span className="text-green-400 text-base">✓</span>}
-        {isError && <span className="text-red-400 text-base">✗</span>}
+        {isSuccess && <span className="text-green-600 text-lg font-black">✓</span>}
+        {isError && <span className="text-red-500 text-lg font-black">✗</span>}
         <span
-          className={`font-medium ${
-            isSuccess ? 'text-green-300' : isError ? 'text-red-300' : 'text-blue-300'
+          className={`font-extrabold ${
+            isSuccess ? 'text-green-700' : isError ? 'text-red-600' : 'text-brand-600'
           }`}
         >
           {order.status === 'building' && 'Building order…'}
           {order.status === 'approving' && 'Approving token…'}
           {order.status === 'signing' && 'Waiting for MetaMask signature…'}
           {order.status === 'submitting' && 'Submitting to platform…'}
-          {order.status === 'success' && 'Order accepted!'}
+          {order.status === 'success' && '🎉 Order accepted!'}
           {order.status === 'error' && 'Order failed'}
         </span>
       </div>
 
       {/* Order ID */}
       {orderId && (
-        <p className="text-xs text-gray-400">
-          Order ID: <span className="font-mono text-gray-300">{orderId}</span>
+        <p className="text-xs font-bold text-ink-muted">
+          Order ID: <span className="font-mono text-ink">{orderId}</span>
         </p>
       )}
 
       {/* Tx hash with explorer link */}
       {txHash && (
-        <p className="text-xs text-gray-400 flex items-center gap-1 flex-wrap">
+        <p className="text-xs font-bold text-ink-muted flex items-center gap-1 flex-wrap">
           Tx:{' '}
           {explorerBase ? (
             <a
               href={`${explorerBase}${txHash}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="font-mono text-blue-400 hover:underline break-all"
+              className="font-mono text-brand-600 hover:underline break-all font-extrabold"
             >
               {txHash.slice(0, 10)}…{txHash.slice(-8)}
             </a>
           ) : (
-            <span className="font-mono text-gray-300 break-all">{txHash}</span>
+            <span className="font-mono text-ink break-all">{txHash}</span>
           )}
         </p>
       )}
 
       {/* Error message */}
       {isError && order.error && (
-        <p className="text-xs text-red-400">{order.error}</p>
+        <p className="text-xs font-bold text-red-600">{order.error}</p>
       )}
 
       {/* Action buttons */}
       {(isSuccess || isError) && (
         <button
           onClick={resetOrder}
-          className="text-xs underline text-gray-400 hover:text-gray-200 mt-1"
+          className="text-xs font-extrabold text-brand-600 hover:underline mt-1"
         >
           {isSuccess ? 'Place another order' : 'Try again'}
         </button>

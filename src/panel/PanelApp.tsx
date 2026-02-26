@@ -40,7 +40,7 @@ export function PanelApp() {
   if (!market) {
     return (
       <div className="flex flex-col items-center justify-center h-full bg-[#0f1117] text-center px-6 gap-4">
-        <div className="text-4xl">🎯</div>
+        <div className="text-4xl"></div>
         <p className="text-sm text-gray-400">
           No market detected. Click a <strong className="text-gray-200">Bet</strong> button on Twitter/X first.
         </p>

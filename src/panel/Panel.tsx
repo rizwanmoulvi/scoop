@@ -75,57 +75,49 @@ export function Panel({ market, onClose }: PanelProps) {
   return (
     <div
       id="scoop-panel-inner"
-      className="flex flex-col h-full bg-[#0f1117] text-white"
-      style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}
+      className="flex flex-col h-full bg-white text-ink"
+      style={{ fontFamily: 'Nunito, Fredoka One, -apple-system, BlinkMacSystemFont, sans-serif' }}
     >
       {/* Header */}
-      <header className="flex items-center gap-2 px-4 py-3 border-b border-gray-800 shrink-0">
-        <span className="text-lg">🎯</span>
-        <h1 className="text-sm font-bold text-white tracking-tight">Scoop</h1>
-        <span className="ml-auto text-xs text-gray-600">v0.1</span>
+      <header className="flex items-center gap-2 px-4 py-3 bg-brand-600 border-b-4 border-brand-700 shrink-0">
+        <span className="text-xl"></span>
+        <h1 className="text-base font-extrabold text-white tracking-tight">Scoop</h1>
+        <span className="ml-2 text-xs font-bold text-blue-200 bg-brand-700 px-2 py-0.5 rounded-full">beta</span>
         <button
           onClick={onClose}
           aria-label="Close panel"
-          className="ml-2 text-gray-500 hover:text-gray-200 transition-colors text-lg leading-none"
+          className="ml-auto w-7 h-7 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-white font-bold text-sm transition-colors"
         >
           ✕
         </button>
       </header>
 
       {/* Content */}
-      <main className="flex-1 overflow-y-auto px-4 py-4 space-y-5 scrollbar-thin">
+      <main className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scrollbar-thin bg-[#f0f4ff]">
         {/* Market info */}
         <section>
           <MarketView />
         </section>
 
-        <div className="border-t border-gray-800" />
-
         {/* Wallet */}
         <section>
-          <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Wallet</p>
+          <p className="text-xs font-extrabold text-ink-muted uppercase tracking-widest mb-2">Wallet</p>
           <WalletConnect />
         </section>
 
         {/* Order form — only when wallet connected */}
         {showOrderForm && (
-          <>
-            <div className="border-t border-gray-800" />
-            <section>
-              <p className="text-xs text-gray-400 uppercase tracking-wider mb-3">Place Order</p>
-              <OrderForm />
-            </section>
-          </>
+          <section>
+            <p className="text-xs font-extrabold text-ink-muted uppercase tracking-widest mb-3">Place Order</p>
+            <OrderForm />
+          </section>
         )}
 
         {/* Status */}
         {order.status !== 'idle' && (
-          <>
-            <div className="border-t border-gray-800" />
-            <section>
-              <StatusView />
-            </section>
-          </>
+          <section>
+            <StatusView />
+          </section>
         )}
       </main>
     </div>

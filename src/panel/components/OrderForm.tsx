@@ -22,19 +22,19 @@ function OutcomeButton({
   return (
     <button
       onClick={onClick}
-      className={`flex-1 py-2.5 px-4 rounded-lg font-semibold text-sm transition-all border-2 ${
+      className={`flex-1 py-3 px-4 rounded-2xl font-extrabold text-sm transition-all border-2 shadow-btn active:translate-y-0.5 ${
         isYes
           ? isSelected
-            ? 'bg-yes border-yes text-white'
-            : 'bg-transparent border-yes/40 text-yes hover:bg-yes/10'
+            ? 'bg-yes border-yes text-white shadow-[3px_3px_0px_0px_rgba(0,60,160,0.30)]'
+            : 'bg-blue-50 border-yes/50 text-yes hover:bg-blue-100'
           : isSelected
-          ? 'bg-no border-no text-white'
-          : 'bg-transparent border-no/40 text-no hover:bg-no/10'
+          ? 'bg-no border-no text-white shadow-[3px_3px_0px_0px_rgba(180,60,0,0.30)]'
+          : 'bg-orange-50 border-no/50 text-no hover:bg-orange-100'
       }`}
     >
       {outcome}
       {pct !== null && (
-        <span className="ml-1.5 text-xs opacity-80">{pct}¢</span>
+        <span className="ml-1.5 text-base font-black">{pct}¢</span>
       )}
     </button>
   )
@@ -129,7 +129,7 @@ export function OrderForm() {
     <div className="space-y-4">
       {/* Outcome selector */}
       <div>
-        <label className="text-xs text-gray-400 uppercase tracking-wider mb-2 block">
+        <label className="text-xs font-extrabold text-ink-muted uppercase tracking-widest mb-2 block">
           Your prediction
         </label>
         <div className="flex gap-2">
@@ -150,7 +150,7 @@ export function OrderForm() {
 
       {/* Amount */}
       <div>
-        <label className="text-xs text-gray-400 uppercase tracking-wider mb-2 block">
+        <label className="text-xs font-extrabold text-ink-muted uppercase tracking-widest mb-2 block">
           Amount (USDC)
         </label>
         <div className="relative">
@@ -161,9 +161,9 @@ export function OrderForm() {
             placeholder="0.00"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg py-2.5 px-3 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 text-sm"
+            className="w-full bg-white border-2 border-brand-200 rounded-2xl py-2.5 px-3 text-ink placeholder-ink-muted/50 focus:outline-none focus:border-brand-500 text-sm font-bold shadow-inner"
           />
-          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-extrabold text-brand-400">
             USDC
           </span>
         </div>
@@ -174,7 +174,7 @@ export function OrderForm() {
             <button
               key={v}
               onClick={() => setAmount(String(v))}
-              className="text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors"
+              className="text-xs px-3 py-1.5 rounded-xl font-extrabold bg-brand-50 hover:bg-brand-100 text-brand-600 border-2 border-brand-200 transition-colors shadow-btn"
             >
               ${v}
             </button>
@@ -184,9 +184,9 @@ export function OrderForm() {
 
       {/* Order summary */}
       {estimatedShares && (
-        <div className="text-xs text-gray-400 flex justify-between bg-gray-800/60 rounded-lg px-3 py-2">
-          <span>Est. shares</span>
-          <span className="text-white font-medium">{estimatedShares}</span>
+        <div className="text-xs font-bold flex justify-between bg-brand-50 border-2 border-brand-100 rounded-2xl px-3 py-2.5">
+          <span className="text-ink-muted">Est. shares</span>
+          <span className="text-ink font-extrabold">{estimatedShares}</span>
         </div>
       )}
 
@@ -194,7 +194,7 @@ export function OrderForm() {
       <button
         onClick={handleSubmit}
         disabled={!canSubmit}
-        className="w-full py-3 rounded-lg font-bold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-brand-600 hover:bg-brand-700 text-white"
+        className="w-full py-3 rounded-2xl font-extrabold text-sm border-2 border-orange-600 shadow-btn-orange transition-all active:translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed bg-orange-500 hover:bg-orange-600 text-white"
       >
         {order.status === 'building' && 'Building order…'}
         {order.status === 'signing' && 'Sign in MetaMask…'}

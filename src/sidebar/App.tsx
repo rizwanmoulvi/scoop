@@ -81,7 +81,7 @@ function useActiveMarket() {
 function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center h-full text-center px-6 gap-4">
-      <div className="text-4xl">🎯</div>
+      <div className="text-4xl"></div>
       <div>
         <h2 className="text-base font-semibold text-white mb-1">No market selected</h2>
         <p className="text-sm text-gray-400">
@@ -107,7 +107,7 @@ export function App() {
     <div className="flex flex-col h-full bg-[#0f1117]">
       {/* Header */}
       <header className="flex items-center gap-2 px-4 py-3 border-b border-gray-800 shrink-0">
-        <span className="text-lg">🎯</span>
+        <span className="text-lg"></span>
         <h1 className="text-sm font-bold text-white tracking-tight">Scoop</h1>
         <span className="ml-auto text-xs text-gray-600">v0.1</span>
       </header>

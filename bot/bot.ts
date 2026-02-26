@@ -223,7 +223,7 @@ function buildTweet(market: ProbableMarket): string {
     `📊 ${market.question}`,
     priceBlock,
     probPct,
-    `\nTrade on probabledotmarket 🎯`,
+    `\nTrade on probabledotmarket `,
     `#ScoopBet_mkt_${hashtagSlug} #PredictionMarket #Scoop`,
   ]
     .filter(Boolean)

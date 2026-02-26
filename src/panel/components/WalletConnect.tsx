@@ -47,11 +47,13 @@ export function WalletConnect() {
 
   if (wallet.address) {
     return (
-      <div className="flex items-center gap-2 px-3 py-2 bg-green-900/30 border border-green-700/40 rounded-lg text-sm">
-        <span className="w-2 h-2 rounded-full bg-green-400 shrink-0" />
-        <span className="text-green-300 font-medium">{shortenAddress(wallet.address)}</span>
+      <div className="flex items-center gap-2 px-3 py-2.5 bg-green-50 border-2 border-green-400 rounded-2xl shadow-card">
+        <span className="w-3 h-3 rounded-full bg-green-500 shrink-0 border-2 border-green-300" />
+        <span className="text-green-700 font-extrabold text-sm">{shortenAddress(wallet.address)}</span>
         {wallet.chainId && (
-          <span className="ml-auto text-xs text-gray-500">Chain {wallet.chainId}</span>
+          <span className="ml-auto text-xs font-bold text-green-500 bg-green-100 px-2 py-0.5 rounded-full">
+            Chain {wallet.chainId}
+          </span>
         )}
       </div>
     )
@@ -62,7 +64,7 @@ export function WalletConnect() {
       <button
         onClick={handleConnect}
         disabled={wallet.isConnecting}
-        className="w-full py-2.5 px-4 rounded-lg font-semibold text-sm bg-brand-600 hover:bg-brand-700 active:bg-brand-700 text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+        className="w-full py-3 px-4 rounded-2xl font-extrabold text-sm bg-orange-500 hover:bg-orange-600 active:translate-y-0.5 text-white border-2 border-orange-600 shadow-btn-orange transition-all disabled:opacity-60 disabled:cursor-not-allowed"
       >
         {wallet.isConnecting ? (
           <span className="flex items-center justify-center gap-2">
@@ -78,7 +80,7 @@ export function WalletConnect() {
       </button>
 
       {wallet.error && (
-        <p className="text-xs text-red-400 text-center px-2">{wallet.error}</p>
+        <p className="text-xs text-red-500 font-bold text-center px-2">{wallet.error}</p>
       )}
     </div>
   )
