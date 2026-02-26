@@ -347,7 +347,7 @@ export class ProbableAdapter implements PredictionPlatform {
         takerAmount:   takerAmount.toString(),
         feeRateBps:    '175',
         nonce:         '0',
-        signatureType: 0,    // EOA signs; proxy wallet is maker/owner
+        signatureType: 1,    // PROB_GNOSIS_SAFE — proxy wallet is maker, EOA is signer
         taker:         '0x0000000000000000000000000000000000000000',
         tokenId:       '',   // injected by OrderForm from market.clobTokenIds
         // apiKey / apiSecret / apiPassphrase injected by OrderForm before submitOrder

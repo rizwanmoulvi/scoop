@@ -13,8 +13,8 @@
  * execTransaction (see proxyWallet.ts executeFromProxy).
  *
  * Contract addresses (BSC mainnet, from developer.probable.markets):
- *   USDT:         0x364d05055614B506e2b9A287E4ac34167204cA83
- *   CTF Token:    0xc53a8b3bF7934fe94305Ed7f84a2ea8ce1028a12
+ *   USDT:         0x55d398326f99059fF775485246999027B3197955 (BSC-Peg USDT)
+ *   CTF Token:    0x364d05055614B506e2b9A287E4ac34167204cA83
  *   CTF Exchange: 0xF99F5367ce708c66F0860B77B4331301A5597c86
  */
 import { proxyRequest } from './wallet'
@@ -23,8 +23,9 @@ import type { WalletSigner } from '../platforms/PredictionPlatform'
 
 // ─── Contract addresses (BSC mainnet) ────────────────────────────────────────
 
-const USDT_ADDRESS         = '0x364d05055614B506e2b9A287E4ac34167204cA83'
-const CTF_TOKEN_ADDRESS    = '0xc53a8b3bF7934fe94305Ed7f84a2ea8ce1028a12'
+// Addresses from developer.probable.markets/api/orderbook-complete-guide
+const USDT_ADDRESS         = '0x55d398326f99059fF775485246999027B3197955' // BSC-Peg USDT
+const CTF_TOKEN_ADDRESS    = '0x364d05055614B506e2b9A287E4ac34167204cA83' // CTF Token (ERC-1155)
 const CTF_EXCHANGE_ADDRESS = '0xF99F5367ce708c66F0860B77B4331301A5597c86'
 
 // Allowances >= 2^255 are treated as "effectively unlimited" (standard DeFi pattern).

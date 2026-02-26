@@ -360,17 +360,19 @@ export async function createProxyWallet(
   }
 
   onProgress?.('Sign the proxy wallet creation in MetaMask…')
+  // Domain per developer.probable.markets/api/orderbook-complete-guide:
+  // name is required — without it the domain separator differs and ecrecover
+  // inside the factory recovers a ghost address, deploying at the wrong CREATE2 slot.
   const signature = await signer.signTypedData(
-    { chainId: BSC_CHAIN_ID, verifyingContract: PROXY_WALLET_FACTORY },
+    { name: 'Probable Contract Proxy Factory', chainId: BSC_CHAIN_ID, verifyingContract: PROXY_WALLET_FACTORY },
     {
       CreateProxy: [
-        { name: 'user',            type: 'address' },
         { name: 'paymentToken',    type: 'address' },
         { name: 'payment',         type: 'uint256' },
         { name: 'paymentReceiver', type: 'address' },
       ],
     },
-    { user: eoaAddress, paymentToken: ZERO, payment: 0n, paymentReceiver: ZERO }
+    { paymentToken: ZERO, payment: 0n, paymentReceiver: ZERO }
   )
 
   const { v, r, s } = splitSig(signature)
