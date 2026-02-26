@@ -42,8 +42,6 @@ const abiCoder = ethers.AbiCoder.defaultAbiCoder()
 
 const factoryIface = new ethers.Interface([
   'function computeProxyAddress(address user) view returns (address)',
-  'function domainSeparator() view returns (bytes32)',
-  'function CREATE_PROXY_TYPEHASH() view returns (bytes32)',
   'function createProxy(address paymentToken, uint256 payment, address paymentReceiver, tuple(uint8 v, bytes32 r, bytes32 s) createSig)',
 ])
 
@@ -146,18 +144,12 @@ export async function proxyWalletExists(proxyAddress: string): Promise<boolean> 
 /**
  * Create the proxy wallet for the EOA.
  *
- * Flow (matches developer.probable.markets docs exactly):
- *  1. Compute the deterministic address and bail out early if already deployed.
- *  2. Fetch CREATE_PROXY_TYPEHASH and domainSeparator from the factory contract.
- *  3. Compute structHash = keccak256(abi.encode(typehash, user, paymentToken, payment, paymentReceiver))
- *  4. Compute messageHash = keccak256("\x19\x01" || domainSeparator || structHash)
- *  5. Sign messageHash as raw bytes via personal_sign (MetaMask adds \x19Ethereum prefix).
- *  6. Call factory.createProxy(zeroAddr, 0, zeroAddr, {v,r,s}).
- *  7. Poll for receipt and return the proxy address.
+ * Signs via eth_signTypedData_v4 (EIP-712). MetaMask computes
+ * keccak256("\x19\x01" || domainSeparator || structHash) internally and
+ * signs the raw digest — exactly what the factory's ecrecover expects.
  *
- * NOTE: We always use the raw-bytes signing path (personal_sign) — not
- * signTypedData — because the factory domain structure varies and the official
- * docs always use walletClient.signMessage({ message: { raw: ... } }).
+ * Domain: { chainId: 56, verifyingContract: FACTORY } — no name/version.
+ * Type:   CreateProxy(address user, address paymentToken, uint256 payment, address paymentReceiver)
  */
 export async function createProxyWallet(
   signer: WalletSigner,
@@ -172,33 +164,19 @@ export async function createProxyWallet(
     return proxyAddress
   }
 
-  onProgress?.('Reading factory contract…')
-  const [domSepResult, typeHashResult] = await Promise.all([
-    ethCall(PROXY_WALLET_FACTORY, factoryIface.encodeFunctionData('domainSeparator', [])),
-    ethCall(PROXY_WALLET_FACTORY, factoryIface.encodeFunctionData('CREATE_PROXY_TYPEHASH', [])),
-  ])
-  const domainSeparator     = factoryIface.decodeFunctionResult('domainSeparator',     domSepResult  )[0] as string
-  const createProxyTypehash = factoryIface.decodeFunctionResult('CREATE_PROXY_TYPEHASH', typeHashResult)[0] as string
-
-  // structHash = keccak256(abi.encode(CREATE_PROXY_TYPEHASH, user, paymentToken, payment, paymentReceiver))
-  const structHash = ethers.keccak256(
-    abiCoder.encode(
-      ['bytes32', 'address', 'address', 'uint256', 'address'],
-      [createProxyTypehash, eoaAddress, ZERO, 0n, ZERO]
-    )
-  )
-
-  // messageHash = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash))
-  const messageHash = ethers.keccak256(
-    ethers.concat([new Uint8Array([0x19, 0x01]), domainSeparator, structHash])
-  )
-
-  // Sign via personal_sign — this is what viem's signMessage({ message: { raw } }) uses,
-  // and what the official Probable docs use. personal_sign prepends the Ethereum signed
-  // message prefix, so the factory verifies with toEthSignedMessageHash(messageHash).
-  // NOTE: eth_sign is disabled by default in MetaMask 12+ — do not use it.
   onProgress?.('Sign the proxy wallet creation in MetaMask…')
-  const signature = (await proxyRequest('personal_sign', [messageHash, eoaAddress.toLowerCase()])) as string
+  const signature = await signer.signTypedData(
+    { chainId: BSC_CHAIN_ID, verifyingContract: PROXY_WALLET_FACTORY },
+    {
+      CreateProxy: [
+        { name: 'user',            type: 'address' },
+        { name: 'paymentToken',    type: 'address' },
+        { name: 'payment',         type: 'uint256' },
+        { name: 'paymentReceiver', type: 'address' },
+      ],
+    },
+    { user: eoaAddress, paymentToken: ZERO, payment: 0n, paymentReceiver: ZERO }
+  )
 
   const { v, r, s } = splitSig(signature)
 
@@ -214,8 +192,7 @@ export async function createProxyWallet(
   onProgress?.('Sent — waiting for BSC confirmation…')
   await waitForReceipt(txHash, onProgress)
 
-  // The RPC node may lag behind the chain tip slightly — retry the existence
-  // check up to 5 times with a 3-second gap before declaring failure.
+  // RPC nodes may lag slightly after confirmation — retry a few times
   for (let attempt = 1; attempt <= 5; attempt++) {
     await new Promise<void>((r) => setTimeout(r, 3000))
     if (await proxyWalletExists(proxyAddress)) return proxyAddress
