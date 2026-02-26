@@ -15,9 +15,10 @@ export function WalletConnect() {
     const cleanup = watchWalletEvents(
       (accounts) => {
         if (accounts.length === 0) {
-          setWallet({ address: null, approvals: null, apiKey: null })
+          setWallet({ address: null, approvals: null, apiKey: null, proxyAddress: null })
         } else {
-          setWallet({ address: accounts[0] })
+          // New account — clear proxy/approvals so re-check triggers
+          setWallet({ address: accounts[0], proxyAddress: null, approvals: null, apiKey: null })
         }
       },
       (chainId) => {
@@ -63,12 +64,17 @@ export function WalletConnect() {
     [setWallet, refreshApprovals]
   )
   // ── Auto-check proxy + approvals when address+chain are resolved ─────────────
+  // Use a ref to track the last (address, chainId) pair we already kicked off a
+  // check for, so we don't loop infinitely when proxyAddress stays null.
+  const lastCheckedRef = React.useRef<string>('')
 
   React.useEffect(() => {
-    if (wallet.address && wallet.chainId === BSC_CHAIN_ID && wallet.approvals === null && !wallet.isCheckingApprovals) {
-      refreshProxy(wallet.address)
-    }
-  }, [wallet.address, wallet.chainId, wallet.approvals, wallet.isCheckingApprovals, refreshProxy])
+    if (!wallet.address || wallet.chainId !== BSC_CHAIN_ID) return
+    const key = `${wallet.address}-${wallet.chainId}`
+    if (lastCheckedRef.current === key) return   // already checked this combo
+    lastCheckedRef.current = key
+    refreshProxy(wallet.address)
+  }, [wallet.address, wallet.chainId, refreshProxy])
   // ── Connect ─────────────────────────────────────────────────────────────────
 
   const handleConnect = async () => {

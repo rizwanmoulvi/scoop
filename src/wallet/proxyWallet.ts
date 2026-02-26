@@ -155,14 +155,12 @@ export async function createProxyWallet(
     ethers.concat([new Uint8Array([0x19, 0x01]), domainSeparator, structHash])
   )
 
-  // Sign the pre-computed EIP-712 final hash via eth_sign (raw signing — no extra prefix).
-  // The factory verifies with ecrecover(messageHash, sig) directly, so we must NOT
-  // use personal_sign (which adds "\x19Ethereum Signed Message:\n32" causing a different
-  // recovered address and a silent sig-check failure that lets the tx confirm but
-  // never deploys the proxy).
-  // eth_sign(address, hash) → MetaMask signs the hash as-is (no prefix).
+  // Sign via personal_sign — this is what viem's signMessage({ message: { raw } }) uses,
+  // and what the official Probable docs use. personal_sign prepends the Ethereum signed
+  // message prefix, so the factory verifies with toEthSignedMessageHash(messageHash).
+  // NOTE: eth_sign is disabled by default in MetaMask 12+ — do not use it.
   onProgress?.('Sign the proxy wallet creation in MetaMask…')
-  const signature = (await proxyRequest('eth_sign', [eoaAddress.toLowerCase(), messageHash])) as string
+  const signature = (await proxyRequest('personal_sign', [messageHash, eoaAddress.toLowerCase()])) as string
 
   const { v, r, s } = splitSig(signature)
 
@@ -177,12 +175,15 @@ export async function createProxyWallet(
   onProgress?.('Waiting for proxy wallet creation to confirm…')
   await waitForReceipt(txHash)
 
-  // Double-check it exists now
-  if (!(await proxyWalletExists(proxyAddress))) {
-    throw new Error('Proxy wallet not found after transaction confirmed — something went wrong')
+  // The RPC node may lag behind the chain tip slightly — retry the existence
+  // check up to 5 times with a 3-second gap before declaring failure.
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    await new Promise<void>((r) => setTimeout(r, 3000))
+    if (await proxyWalletExists(proxyAddress)) return proxyAddress
+    onProgress?.(`Confirming proxy deployment (attempt ${attempt}/5)…`)
   }
 
-  return proxyAddress
+  throw new Error('Proxy wallet not found after transaction confirmed — check BSCScan for the tx status')
 }
 
 // ─── Safe transaction execution ───────────────────────────────────────────────
