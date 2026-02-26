@@ -292,7 +292,11 @@ export class ProbableAdapter implements PredictionPlatform {
    * (EOA signs directly).  Switch to 1 once the proxy wallet is deployed.
    */
   buildOrder(params: TradeInput): Order {
-    const side   = params.outcome === 'YES' ? 0 : 1
+    // In a betting UI the user is always BUYING the outcome token they select.
+    // YES bet → BUY YES tokens (tokenId[0])
+    // NO bet  → BUY NO tokens  (tokenId[1])
+    // Both are side=0 (BUY). The tokenId distinguishes YES vs NO.
+    const side   = 0  // BUY
     const amount = parseFloat(params.amount)  // USDC to spend (BUY) or receive (SELL)
 
     // Clamp price and round to 0.01 tick size (2 decimal places)

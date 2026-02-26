@@ -112,9 +112,10 @@ export function OrderForm() {
 
       // For Probable BUY orders: auto-deposit the exact USDT shortfall into proxy
       if (detectedMarket.platform === 'probable' && !paperTrading && wallet.proxyAddress) {
-        const side       = (unsignedOrder.extra as Record<string, unknown>)?.side as string
-        const makerAmtWei = BigInt(String((unsignedOrder.extra as Record<string, unknown>)?.makerAmount ?? '0'))
-        if (side === 'BUY' && makerAmtWei > 0n) {
+        const extra       = unsignedOrder.extra as Record<string, unknown>
+        const sideNum     = extra?.side as number   // 0 = BUY, 1 = SELL
+        const makerAmtWei = BigInt(String(extra?.makerAmount ?? '0'))
+        if (sideNum === 0 && makerAmtWei > 0n) {
           const proxyBalance = await checkProxyUsdtBalance(wallet.proxyAddress)
           const shortfall    = makerAmtWei > proxyBalance ? makerAmtWei - proxyBalance : 0n
           if (shortfall > 0n) {
