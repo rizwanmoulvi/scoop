@@ -3,7 +3,7 @@ import { useStore } from '../store'
 import { connectWallet, shortenAddress, watchWalletEvents, ProxySigner } from '../../wallet/wallet'
 import { switchNetwork, PLATFORM_CHAINS } from '../../wallet/network'
 import { checkApprovals, grantApprovals } from '../../wallet/approvals'
-import { computeProxyAddress, proxyWalletExists, createProxyWallet } from '../../wallet/proxyWallet'
+import { detectProxyWallet, createProxyWallet } from '../../wallet/proxyWallet'
 
 const BSC_CHAIN_ID = 56
 
@@ -50,14 +50,13 @@ export function WalletConnect() {
     async (eoaAddress: string) => {
       setWallet({ error: null })
       try {
-        const proxyAddr = await computeProxyAddress(eoaAddress)
-        console.log('[Scoop] computed proxy address:', proxyAddr)
-        const exists = await proxyWalletExists(proxyAddr)
-        console.log('[Scoop] proxy exists:', exists)
-        if (exists) {
+        const proxyAddr = await detectProxyWallet(eoaAddress)
+        if (proxyAddr) {
+          console.log('[Scoop] proxy wallet found:', proxyAddr)
           setWallet({ proxyAddress: proxyAddr })
           await refreshApprovals(proxyAddr)
         } else {
+          console.log('[Scoop] no proxy wallet found for', eoaAddress)
           setWallet({ proxyAddress: null })
         }
       } catch (err: unknown) {

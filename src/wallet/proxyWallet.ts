@@ -38,7 +38,12 @@ const SAFE_TX_TYPEHASH = ethers.keccak256(
 
 const abiCoder = ethers.AbiCoder.defaultAbiCoder()
 
-// ─── ABI interfaces ───────────────────────────────────────────────────────────
+// ProxyCreation(address proxy, address owner) — neither param is indexed
+const PROXY_CREATION_TOPIC = ethers.id('ProxyCreation(address,address)')
+// Approximate BSC block at factory deployment (~107 days before Feb 2026)
+const FACTORY_DEPLOY_BLOCK = '0x29F6300' // ~44 000 000
+
+// ─── ABI interfaces ─────────────────────────────────────────────────────────
 
 const factoryIface = new ethers.Interface([
   'function computeProxyAddress(address user) view returns (address)',
@@ -168,6 +173,74 @@ export async function proxyWalletExists(proxyAddress: string): Promise<boolean> 
   })
 
   return false
+}
+
+/**
+ * Scan factory ProxyCreation logs to find a proxy where owner === eoaAddress.
+ * Used as fallback when eth_getCode at the computed address returns 0x (e.g.
+ * the proxy was created with a different EOA that is no longer the active account).
+ */
+async function findProxyFromLogs(eoaAddress: string): Promise<string | null> {
+  const normalized = eoaAddress.toLowerCase()
+  try {
+    const logs = (await rpcCall('eth_getLogs', [{
+      address: PROXY_WALLET_FACTORY,
+      topics:  [PROXY_CREATION_TOPIC],
+      fromBlock: FACTORY_DEPLOY_BLOCK,
+      toBlock: 'latest',
+    }])) as Array<{ data: string }>
+
+    console.log(`[Scoop] scanning ${logs.length} ProxyCreation logs for owner ${eoaAddress}`)
+    for (const log of logs) {
+      const [proxy, owner] = abiCoder.decode(['address', 'address'], log.data)
+      if ((owner as string).toLowerCase() === normalized) {
+        console.log('[Scoop] found proxy via logs:', proxy, 'owner:', owner)
+        return proxy as string
+      }
+    }
+  } catch (e) {
+    console.warn('[Scoop] findProxyFromLogs failed:', e)
+  }
+  return null
+}
+
+/**
+ * Detect the proxy wallet address for an EOA.
+ *
+ * 1. Calls factory.computeProxyAddress(eoaAddress) for the expected address.
+ * 2. Checks eth_getCode — if deployed, returns it immediately.
+ * 3. Falls back to scanning ProxyCreation logs in case the proxy was deployed
+ *    under a different signing account or the CREATE2 salt drifts.
+ *
+ * Returns the proxy address string, or null if no proxy exists yet.
+ */
+export async function detectProxyWallet(eoaAddress: string): Promise<string | null> {
+  // Step 1 — deterministic address
+  const expected = await computeProxyAddress(eoaAddress)
+  console.log('[Scoop] expected proxy address:', expected)
+
+  // Step 2 — check both RPC paths in parallel
+  const isDeployed = (code: unknown) =>
+    typeof code === 'string' && code !== '0x' && code.length > 2
+  const [rpcResult, mmResult] = await Promise.allSettled([
+    rpcCall('eth_getCode', [expected, 'latest']),
+    proxyRequest('eth_getCode', [expected, 'latest']),
+  ])
+  console.log('[Scoop] eth_getCode via direct RPC:',
+    rpcResult.status === 'fulfilled' ? (rpcResult.value as string)?.slice(0, 20) : rpcResult.reason)
+  console.log('[Scoop] eth_getCode via MetaMask:',
+    mmResult.status === 'fulfilled' ? (mmResult.value as string)?.slice(0, 20) : mmResult.reason)
+
+  if (
+    (rpcResult.status === 'fulfilled' && isDeployed(rpcResult.value)) ||
+    (mmResult.status  === 'fulfilled' && isDeployed(mmResult.value))
+  ) {
+    return expected
+  }
+
+  // Step 3 — log scan fallback (handles wrong-EOA deployments)
+  console.log('[Scoop] expected address has no code — scanning factory logs…')
+  return findProxyFromLogs(eoaAddress)
 }
 
 /**
