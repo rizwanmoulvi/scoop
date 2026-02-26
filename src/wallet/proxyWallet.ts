@@ -67,7 +67,10 @@ async function ethCall(to: string, data: string): Promise<string> {
 }
 
 // Public BSC RPC endpoints used only for read-only polling (faster than MetaMask bridge)
+// Infura is listed first and used as primary — it supports large eth_getLogs ranges
+const BSC_RPC_INFURA = 'https://bsc-mainnet.infura.io/v3/a22bd6dce300455a961e4b40d27ecafb'
 const BSC_RPC_ENDPOINTS = [
+  BSC_RPC_INFURA,
   'https://bsc-dataseed1.binance.org',
   'https://bsc-dataseed2.binance.org',
   'https://bsc-dataseed1.defibit.io',
@@ -183,12 +186,24 @@ export async function proxyWalletExists(proxyAddress: string): Promise<boolean> 
 async function findProxyFromLogs(eoaAddress: string): Promise<string | null> {
   const normalized = eoaAddress.toLowerCase()
   try {
-    const logs = (await rpcCall('eth_getLogs', [{
-      address: PROXY_WALLET_FACTORY,
-      topics:  [PROXY_CREATION_TOPIC],
-      fromBlock: FACTORY_DEPLOY_BLOCK,
-      toBlock: 'latest',
-    }])) as Array<{ data: string }>
+    // Use Infura directly for log queries — public nodes rate-limit large eth_getLogs ranges
+    const res = await fetch(BSC_RPC_INFURA, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1,
+        method: 'eth_getLogs',
+        params: [{
+          address: PROXY_WALLET_FACTORY,
+          topics:  [PROXY_CREATION_TOPIC],
+          fromBlock: FACTORY_DEPLOY_BLOCK,
+          toBlock: 'latest',
+        }],
+      }),
+    })
+    const json = await res.json() as { result?: Array<{ data: string }>; error?: { message?: string } }
+    if (json.error) throw new Error(json.error.message ?? 'Infura eth_getLogs error')
+    const logs = json.result ?? []
 
     console.log(`[Scoop] scanning ${logs.length} ProxyCreation logs for owner ${eoaAddress}`)
     for (const log of logs) {

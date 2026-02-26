@@ -21,6 +21,7 @@
     "https://api.probable.markets/*",
     "https://app.predict.fun/*",
     "https://app.opinion.trade/*",
+    "https://bsc-mainnet.infura.io/*",
     "https://bsc-dataseed1.binance.org/*",
     "https://bsc-dataseed2.binance.org/*",
     "https://bsc-dataseed1.defibit.io/*",
