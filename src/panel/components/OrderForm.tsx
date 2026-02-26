@@ -4,6 +4,7 @@ import type { Outcome } from '../../types/market'
 import { getAdapter } from '../../platforms'
 import type { ProbableAdapter } from '../../platforms/ProbableAdapter'
 import { connectWallet, ProxySigner } from '../../wallet/wallet'
+import { checkProxyUsdtBalance, depositUsdtToProxy } from '../../wallet/approvals'
 
 function OutcomeButton({
   outcome,
@@ -55,6 +56,7 @@ export function OrderForm() {
     setOrder,
     resetOrder,
     setApiKey,
+    setWallet,
   } = useStore()
 
   const isConnected = Boolean(wallet.address)
@@ -107,6 +109,28 @@ export function OrderForm() {
       }
 
       const unsignedOrder = adapter.buildOrder(tradeInput)
+
+      // For Probable BUY orders: auto-deposit the exact USDT shortfall into proxy
+      if (detectedMarket.platform === 'probable' && !paperTrading && wallet.proxyAddress) {
+        const side       = (unsignedOrder.extra as Record<string, unknown>)?.side as string
+        const makerAmtWei = BigInt(String((unsignedOrder.extra as Record<string, unknown>)?.makerAmount ?? '0'))
+        if (side === 'BUY' && makerAmtWei > 0n) {
+          const proxyBalance = await checkProxyUsdtBalance(wallet.proxyAddress)
+          const shortfall    = makerAmtWei > proxyBalance ? makerAmtWei - proxyBalance : 0n
+          if (shortfall > 0n) {
+            setOrder({ status: 'depositing' })
+            const signer = new ProxySigner(wallet.address)
+            await depositUsdtToProxy(signer, wallet.proxyAddress, shortfall)
+            // Update proxy balance display in wallet panel
+            const fmt = (wei: bigint) => {
+              const whole = wei / 10n ** 18n
+              const frac  = (wei % 10n ** 18n) * 100n / 10n ** 18n
+              return `${whole}.${frac.toString().padStart(2, '0')}`
+            }
+            setWallet({ proxyUsdtBalance: fmt(makerAmtWei) })
+          }
+        }
+      }
 
       // For Probable: attach the correct clobTokenId for the chosen outcome
       // so the adapter can include it in the EIP-712 message.
@@ -251,6 +275,7 @@ export function OrderForm() {
         }`}
       >
         {order.status === 'building'   && 'Building order…'}
+        {order.status === 'depositing' && 'Depositing USDT…'}
         {order.status === 'signing'    && 'Sign in MetaMask…'}
         {order.status === 'submitting' && (paperTrading ? 'Simulating…' : 'Submitting…')}
         {order.status === 'idle'       && (paperTrading

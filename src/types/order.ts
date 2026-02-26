@@ -37,7 +37,7 @@ export interface ApiResponse {
   raw?: unknown
 }
 
-export type OrderStatus = 'idle' | 'building' | 'approving' | 'signing' | 'submitting' | 'success' | 'error'
+export type OrderStatus = 'idle' | 'building' | 'approving' | 'depositing' | 'signing' | 'submitting' | 'success' | 'error'
 
 export interface OrderState {
   status: OrderStatus

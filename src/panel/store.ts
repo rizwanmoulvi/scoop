@@ -35,10 +35,6 @@ export interface WalletState {
   proxyStep: string
   /** Human-readable USDT balance in proxy wallet (e.g. "12.50"), null if not yet checked */
   proxyUsdtBalance: string | null
-  /** True while depositUsdtToProxy() is running */
-  isDepositingUsdt: boolean
-  /** Status text shown during deposit flow */
-  depositStep: string
 }
 
 export interface AppStore {
@@ -92,8 +88,6 @@ const DEFAULT_WALLET: WalletState = {
   isCreatingProxy: false,
   proxyStep: '',
   proxyUsdtBalance: null,
-  isDepositingUsdt: false,
-  depositStep: '',
 }
 
 const DEFAULT_ORDER: OrderState = {
