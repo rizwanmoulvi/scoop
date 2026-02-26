@@ -353,7 +353,7 @@ export class ProbableAdapter implements PredictionPlatform {
         side,
         makerAmount:   makerAmount.toString(),
         takerAmount:   takerAmount.toString(),
-        feeRateBps:    '175',
+        feeRateBps:    '0',  // 0 matches the working clob-examples reference implementation
         nonce:         '0',
         signatureType: 1,    // PROB_GNOSIS_SAFE — proxy wallet is maker, EOA is signer
         taker:         '0x0000000000000000000000000000000000000000',
@@ -528,6 +528,8 @@ export class ProbableAdapter implements PredictionPlatform {
     }
 
     // EOA signs and authenticates; proxy wallet is the on-chain maker/owner.
+    // IMPORTANT: `owner` in the request body must be the EOA signer address,
+    // not the proxy. This matches the official clob-examples reference implementation.
     const eoaAddress   = await _signer.getAddress()
     const proxyAddress = extra.proxyAddress ?? order.makerAddress
     const path         = `/public/api/v1/order/${BSC_CHAIN_ID}`
@@ -549,7 +551,7 @@ export class ProbableAdapter implements PredictionPlatform {
         signatureType: extra.signatureType,
         signature:     order.signature,
       },
-      owner:     proxyAddress,   // proxy wallet
+      owner:     eoaAddress,     // MUST be EOA address — matches clob-examples reference
       orderType: 'GTC',
     }
 
