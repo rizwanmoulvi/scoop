@@ -101,6 +101,8 @@ export class ProxySigner implements WalletSigner {
       typeof val === 'bigint' ? val.toString() : val
     )
 
+    console.log('[Scoop] eth_signTypedData_v4 payload:', json)
+
     return proxyRequest('eth_signTypedData_v4', [this.address, json]) as Promise<string>
   }
 }

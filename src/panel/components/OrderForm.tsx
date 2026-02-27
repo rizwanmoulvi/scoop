@@ -3,7 +3,7 @@ import { useStore } from '../store'
 import type { Outcome } from '../../types/market'
 import { getAdapter } from '../../platforms'
 import type { ProbableAdapter } from '../../platforms/ProbableAdapter'
-import { connectWallet, ProxySigner } from '../../wallet/wallet'
+import { connectWallet, ProxySigner, proxyRequest } from '../../wallet/wallet'
 import { checkProxyUsdtBalance, checkEoaUsdtBalance, depositUsdtToProxy } from '../../wallet/approvals'
 
 function OutcomeButton({
@@ -95,6 +95,16 @@ export function OrderForm() {
     setOrder({ status: 'building' })
 
     try {
+      // Guard: must be on BSC mainnet for Probable orders
+      if (isProbable && !paperTrading) {
+        const chainHex = (await proxyRequest('eth_chainId', [])) as string
+        const chainId = parseInt(chainHex, 16)
+        if (chainId !== 56) {
+          throw new Error(
+            `Wrong network: MetaMask is on chain ${chainId}. Please switch to BSC Mainnet (chain 56) before placing an order.`
+          )
+        }
+      }
       const adapter = getAdapter(detectedMarket.platform)
 
       const tradeInput = {
