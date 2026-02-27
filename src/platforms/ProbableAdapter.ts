@@ -3,6 +3,7 @@ import type { Market, OrderBook } from '../types/market'
 import type { ApiResponse, Order, SignedOrder, TradeInput } from '../types/order'
 import type { PredictionPlatform, WalletSigner } from './PredictionPlatform'
 import { apiFetch } from '../utils/apiFetch'
+import { proxyRequest } from '../wallet/wallet'
 
 /**
  * Probable.markets adapter.
@@ -388,6 +389,8 @@ export class ProbableAdapter implements PredictionPlatform {
     const BSC_RPCS = [
       'https://bsc-dataseed1.binance.org',
       'https://bsc-dataseed2.binance.org',
+      'https://bsc-dataseed1.defibit.io',
+      'https://bsc-dataseed1.ninicoin.io',
     ]
     for (const rpc of BSC_RPCS) {
       try {
@@ -406,11 +409,82 @@ export class ProbableAdapter implements PredictionPlatform {
           return val as bigint
         }
       } catch (e) {
-        console.warn('[Scoop] getMinNonce RPC failed:', e)
+        console.warn('[Scoop] getMinNonce direct RPC failed:', e)
       }
     }
-    console.warn('[Scoop] getMinNonce: could not fetch, defaulting to 0')
+    // Last resort: use MetaMask's RPC
+    try {
+      const result = await proxyRequest('eth_call', [
+        { to: CTF_EXCHANGE_ADDRESS, data: calldata }, 'latest'
+      ])
+      if (result && typeof result === 'string' && result !== '0x') {
+        const [val] = iface.decodeFunctionResult('getMinNonce', result)
+        console.log('[Scoop] getMinNonce (MetaMask) for', makerAddress, '=', (val as bigint).toString())
+        return val as bigint
+      }
+    } catch (e) {
+      console.warn('[Scoop] getMinNonce MetaMask fallback failed:', e)
+    }
+    console.warn('[Scoop] getMinNonce: all RPCs failed, defaulting to 0')
     return 0n
+  }
+
+  /**
+   * Verify the proxy wallet has sufficient USDT balance and allowance before
+   * signing.  Throws descriptive errors so the user sees a real message instead
+   * of the opaque PAS-4205.
+   */
+  private async verifyOrderPreconditions(
+    proxyAddress: string,
+    makerAmount: bigint
+  ): Promise<void> {
+    const USDT    = '0x55d398326f99059fF775485246999027B3197955'
+    const pad     = (addr: string) => addr.slice(2).toLowerCase().padStart(64, '0')
+    const dec     = (hex: string)  => { try { return BigInt(hex) } catch { return 0n } }
+    const fmtUsdt = (wei: bigint)  => {
+      const whole = wei / 10n ** 18n
+      const frac  = (wei % 10n ** 18n) * 100n / 10n ** 18n
+      return `${whole}.${frac.toString().padStart(2, '0')}`
+    }
+
+    // balanceOf(proxy)  +  allowance(proxy, CTFExchange) in parallel
+    const balData  = '0x70a08231' + pad(proxyAddress)
+    const allowData = '0xdd62ed3e' + pad(proxyAddress) + pad(CTF_EXCHANGE_ADDRESS)
+
+    let balance = 0n, allowance = 0n
+    try {
+      const [balRes, allowRes] = await Promise.all([
+        proxyRequest('eth_call', [{ to: USDT, data: balData },   'latest']),
+        proxyRequest('eth_call', [{ to: USDT, data: allowData }, 'latest']),
+      ])
+      balance   = dec(balRes   as string)
+      allowance = dec(allowRes as string)
+    } catch (e) {
+      console.warn('[Scoop] verifyOrderPreconditions: RPC error, skipping checks:', e)
+      return // Don't block if we can't check
+    }
+
+    console.log('[Scoop] verifyOrderPreconditions:', {
+      proxy: proxyAddress,
+      balance:   fmtUsdt(balance)   + ' USDT',
+      allowance: fmtUsdt(allowance) + ' USDT',
+      need:      fmtUsdt(makerAmount) + ' USDT',
+    })
+
+    if (balance < makerAmount) {
+      throw new Error(
+        `Proxy wallet has insufficient USDT balance. ` +
+        `Need ${fmtUsdt(makerAmount)} USDT, proxy has ${fmtUsdt(balance)} USDT. ` +
+        `Please deposit more USDT first.`
+      )
+    }
+    if (allowance < makerAmount) {
+      throw new Error(
+        `Proxy wallet has insufficient USDT allowance for the CTF Exchange. ` +
+        `Need ${fmtUsdt(makerAmount)} USDT approved, only ${fmtUsdt(allowance)} USDT approved. ` +
+        `Please re-run the approvals setup.`
+      )
+    }
   }
 
   async signOrder(order: Order, signer: WalletSigner): Promise<SignedOrder> {
@@ -425,6 +499,10 @@ export class ProbableAdapter implements PredictionPlatform {
     // maker = proxy wallet (passed as makerAddress from OrderForm)
     // signer = EOA that actually signs the EIP-712 message
     const eoaAddress = await signer.getAddress()
+
+    // Verify proxy has enough balance + allowance before prompting MetaMask.
+    // This converts PAS-4205 into a human-readable error message.
+    await this.verifyOrderPreconditions(order.makerAddress, BigInt(extra.makerAmount))
 
     // Fetch the contract's current minimum nonce for this maker.
     // Using a stale or zero nonce when the contract has advanced it causes PAS-4205.
