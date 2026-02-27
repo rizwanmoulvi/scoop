@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scoop — Trade the Tweet</title>
+  <meta name="description" content="A Chrome extension that detects prediction market links on X and lets you buy or sell outcome shares without leaving the page." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --black: #000;
+      --white: #fff;
+      --gray-50: #fafafa;
+      --gray-100: #f4f4f5;
+      --gray-200: #e4e4e7;
+      --gray-300: #d4d4d8;
+      --gray-400: #a1a1aa;
+      --gray-500: #71717a;
+      --gray-700: #3f3f46;
+      --gray-900: #18181b;
+      --font: 'Inter', system-ui, sans-serif;
+      --mono: 'JetBrains Mono', monospace;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font);
+      background: var(--black);
+      color: var(--white);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* ── NAV ─────────────────────────────────────────────────────────────── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 2rem;
+      height: 56px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      background: rgba(0,0,0,0.85);
+      backdrop-filter: blur(12px);
+    }
+    .nav-logo {
+      font-size: 1rem; font-weight: 700; letter-spacing: -0.02em;
+      color: var(--white); text-decoration: none;
+    }
+    .nav-logo span { color: var(--gray-400); font-weight: 400; }
+    .nav-links { display: flex; gap: 2rem; align-items: center; }
+    .nav-links a {
+      font-size: 0.8125rem; font-weight: 500; color: var(--gray-400);
+      text-decoration: none; transition: color 0.15s;
+    }
+    .nav-links a:hover { color: var(--white); }
+    .nav-cta {
+      font-size: 0.8125rem; font-weight: 600;
+      background: var(--white); color: var(--black);
+      border: none; padding: 0.4rem 1rem; border-radius: 6px;
+      cursor: pointer; text-decoration: none; transition: background 0.15s;
+    }
+    .nav-cta:hover { background: var(--gray-200); }
+
+    /* ── HERO ────────────────────────────────────────────────────────────── */
+    .hero {
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      text-align: center;
+      padding: 80px 2rem 4rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse 80% 50% at 50% 60%, rgba(255,255,255,0.04) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    /* faint grid */
+    .hero::after {
+      content: '';
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size: 48px 48px;
+      pointer-events: none;
+    }
+
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      font-size: 0.75rem; font-weight: 500; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--gray-400);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 0.3rem 0.9rem; border-radius: 100px;
+      margin-bottom: 2rem;
+      animation: fadeUp 0.6s ease both;
+    }
+    .hero-badge-dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--white);
+      animation: pulse 2s ease infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.3; }
+    }
+
+    h1 {
+      font-size: clamp(2.8rem, 8vw, 6rem);
+      font-weight: 900; letter-spacing: -0.04em; line-height: 1;
+      animation: fadeUp 0.6s 0.1s ease both;
+    }
+    h1 .accent { color: var(--gray-400); }
+
+    .hero-sub {
+      max-width: 520px; margin: 1.5rem auto 0;
+      font-size: 1.0625rem; color: var(--gray-400); line-height: 1.7;
+      font-weight: 400;
+      animation: fadeUp 0.6s 0.2s ease both;
+    }
+
+    .hero-actions {
+      display: flex; gap: 0.75rem; flex-wrap: wrap;
+      justify-content: center; margin-top: 2.5rem;
+      animation: fadeUp 0.6s 0.3s ease both;
+    }
+    .btn-primary {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      background: var(--white); color: var(--black);
+      font-family: var(--font); font-size: 0.9375rem; font-weight: 600;
+      padding: 0.75rem 1.75rem; border-radius: 8px; border: none;
+      cursor: pointer; text-decoration: none;
+      transition: transform 0.15s, background 0.15s;
+    }
+    .btn-primary:hover { background: var(--gray-100); transform: translateY(-1px); }
+    .btn-primary:active { transform: translateY(0); }
+    .btn-secondary {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      background: transparent; color: var(--white);
+      font-family: var(--font); font-size: 0.9375rem; font-weight: 500;
+      padding: 0.75rem 1.75rem; border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.2);
+      cursor: pointer; text-decoration: none;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    .btn-secondary:hover { border-color: rgba(255,255,255,0.5); transform: translateY(-1px); }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── MOCK UI ─────────────────────────────────────────────────────────── */
+    .mock-container {
+      margin-top: 4rem; width: 100%; max-width: 380px;
+      animation: fadeUp 0.6s 0.4s ease both;
+      position: relative; z-index: 1;
+    }
+    .mock-tweet {
+      background: var(--gray-900); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 14px; padding: 1rem 1.25rem;
+      font-size: 0.875rem; text-align: left; position: relative;
+    }
+    .mock-tweet-header {
+      display: flex; align-items: center; gap: 0.625rem; margin-bottom: 0.625rem;
+    }
+    .mock-avatar {
+      width: 32px; height: 32px; background: var(--gray-700);
+      border-radius: 50%; flex-shrink: 0;
+    }
+    .mock-name { font-weight: 600; font-size: 0.8125rem; }
+    .mock-handle { font-size: 0.75rem; color: var(--gray-500); }
+    .mock-text { font-size: 0.875rem; line-height: 1.5; color: var(--gray-200); }
+    .mock-link { color: var(--white); font-weight: 500; border-bottom: 1px solid rgba(255,255,255,0.3); }
+    .mock-bet-btn {
+      display: inline-flex; align-items: center; gap: 0.375rem;
+      background: var(--white); color: var(--black);
+      font-size: 0.75rem; font-weight: 700;
+      padding: 0.35rem 0.875rem; border-radius: 6px;
+      margin-top: 0.75rem; border: none; cursor: pointer;
+      letter-spacing: 0.02em;
+      animation: betPulse 3s ease infinite;
+    }
+    @keyframes betPulse {
+      0%, 80%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+      40% { box-shadow: 0 0 0 6px rgba(255,255,255,0.12); }
+    }
+
+    /* panel mock */
+    .mock-panel {
+      margin-top: 0.75rem;
+      background: var(--white); color: var(--black);
+      border-radius: 14px; padding: 1.25rem;
+      font-size: 0.8125rem; text-align: left;
+      border: 1px solid var(--gray-200);
+    }
+    .mock-panel-title { font-size: 0.75rem; color: var(--gray-500); font-weight: 500; margin-bottom: 0.25rem; }
+    .mock-panel-question { font-size: 0.875rem; font-weight: 600; line-height: 1.4; margin-bottom: 0.875rem; color: var(--black); }
+    .mock-prob-label {
+      display: flex; justify-content: space-between;
+      font-size: 0.75rem; font-weight: 500; color: var(--gray-500); margin-bottom: 4px;
+    }
+    .mock-prob-label strong { color: var(--black); }
+    .mock-bar {
+      height: 8px; border-radius: 4px; background: var(--gray-200); overflow: hidden; margin-bottom: 0.875rem;
+    }
+    .mock-bar-fill {
+      height: 100%; background: var(--black); border-radius: 4px;
+      width: 0; transition: width 1.2s cubic-bezier(0.4,0,0.2,1);
+    }
+    .mock-outcomes { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .mock-outcome-btn {
+      flex: 1; padding: 0.5rem; border-radius: 8px; font-size: 0.75rem;
+      font-weight: 600; text-align: center; border: 1px solid var(--gray-300);
+      background: var(--white); color: var(--black);
+      cursor: pointer;
+    }
+    .mock-outcome-btn.active {
+      background: var(--black); color: var(--white); border-color: var(--black);
+    }
+    .mock-input-row {
+      display: flex; align-items: center; gap: 0.5rem;
+      border: 1px solid var(--gray-300); border-radius: 8px;
+      padding: 0.5rem 0.75rem; margin-bottom: 0.625rem;
+    }
+    .mock-input-val { font-size: 0.875rem; font-weight: 500; flex: 1; color: var(--black); }
+    .mock-input-token { font-size: 0.75rem; color: var(--gray-400); }
+    .mock-submit {
+      width: 100%; padding: 0.65rem; border-radius: 8px;
+      background: var(--black); color: var(--white);
+      font-size: 0.8125rem; font-weight: 600; border: none; cursor: pointer;
+    }
+    .mock-position {
+      font-size: 0.75rem; color: var(--gray-500); margin-top: 0.5rem;
+      text-align: center;
+    }
+    .mock-position strong { color: var(--black); }
+
+    /* connector */
+    .mock-connector {
+      width: 2px; height: 24px; background: rgba(255,255,255,0.15);
+      margin: 0 auto;
+    }
+
+    /* ── STATS BAR ───────────────────────────────────────────────────────── */
+    .stats-bar {
+      border-top: 1px solid rgba(255,255,255,0.08);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      padding: 2rem;
+      display: flex; flex-wrap: wrap; justify-content: center; gap: 3rem;
+    }
+    .stat { text-align: center; }
+    .stat-value {
+      font-size: 2rem; font-weight: 800; letter-spacing: -0.03em;
+      line-height: 1;
+    }
+    .stat-label { font-size: 0.8125rem; color: var(--gray-500); margin-top: 0.25rem; }
+
+    /* ── SECTIONS ────────────────────────────────────────────────────────── */
+    section { padding: 6rem 2rem; }
+    .section-inner { max-width: 1000px; margin: 0 auto; }
+
+    .section-eyebrow {
+      font-size: 0.75rem; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--gray-500); margin-bottom: 0.75rem;
+    }
+    .section-title {
+      font-size: clamp(1.75rem, 4vw, 2.75rem);
+      font-weight: 800; letter-spacing: -0.03em; line-height: 1.15;
+    }
+    .section-sub {
+      max-width: 540px; color: var(--gray-400);
+      font-size: 1rem; margin-top: 0.875rem; line-height: 1.7;
+    }
+
+    /* ── HOW IT WORKS ────────────────────────────────────────────────────── */
+    .how-section { background: var(--white); color: var(--black); }
+    .how-section .section-eyebrow { color: var(--gray-500); }
+    .how-section .section-title { color: var(--black); }
+    .how-section .section-sub { color: var(--gray-500); }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 2rem; margin-top: 3rem;
+    }
+    .step {
+      position: relative;
+    }
+    .step-num {
+      font-family: var(--mono); font-size: 0.75rem; font-weight: 500;
+      color: var(--gray-400); margin-bottom: 0.875rem;
+    }
+    .step-icon {
+      width: 44px; height: 44px; border-radius: 10px;
+      background: var(--black); color: var(--white);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.25rem; margin-bottom: 1rem;
+    }
+    .step h3 {
+      font-size: 1rem; font-weight: 700; letter-spacing: -0.01em;
+      margin-bottom: 0.375rem; color: var(--black);
+    }
+    .step p { font-size: 0.875rem; color: var(--gray-500); line-height: 1.6; }
+
+    /* ── FEATURES ────────────────────────────────────────────────────────── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1px; margin-top: 3rem;
+      border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; overflow: hidden;
+    }
+    .feature-card {
+      padding: 2rem;
+      border-right: 1px solid rgba(255,255,255,0.08);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      transition: background 0.2s;
+    }
+    .feature-card:hover { background: rgba(255,255,255,0.03); }
+    .feature-icon { font-size: 1.5rem; margin-bottom: 1rem; }
+    .feature-card h3 {
+      font-size: 0.9375rem; font-weight: 600; margin-bottom: 0.5rem;
+      letter-spacing: -0.01em;
+    }
+    .feature-card p { font-size: 0.8125rem; color: var(--gray-400); line-height: 1.6; }
+
+    /* ── TECH ────────────────────────────────────────────────────────────── */
+    .tech-section { background: var(--gray-900); }
+    .tech-chips {
+      display: flex; flex-wrap: wrap; gap: 0.625rem; margin-top: 2rem;
+    }
+    .chip {
+      display: inline-flex; align-items: center; gap: 0.375rem;
+      font-family: var(--mono); font-size: 0.75rem; font-weight: 500;
+      background: rgba(255,255,255,0.06); color: var(--gray-300);
+      border: 1px solid rgba(255,255,255,0.1);
+      padding: 0.35rem 0.75rem; border-radius: 6px;
+    }
+    .chip-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--white); opacity: 0.5; }
+
+    .chain-card {
+      margin-top: 2.5rem; display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1rem;
+    }
+    .chain-item {
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px; padding: 1.25rem;
+    }
+    .chain-item-label {
+      font-size: 0.6875rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--gray-500); margin-bottom: 0.375rem;
+    }
+    .chain-item-name { font-size: 0.9375rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .chain-item-addr {
+      font-family: var(--mono); font-size: 0.6875rem; color: var(--gray-500);
+      word-break: break-all;
+    }
+    .chain-item-addr a { color: var(--gray-400); text-decoration: none; transition: color 0.15s; }
+    .chain-item-addr a:hover { color: var(--white); }
+
+    /* ── DOWNLOAD ────────────────────────────────────────────────────────── */
+    .download-section { background: var(--white); color: var(--black); }
+    .download-section .section-eyebrow { color: var(--gray-500); }
+    .download-section .section-title { color: var(--black); }
+    .download-section .section-sub { color: var(--gray-500); }
+
+    .install-steps {
+      margin-top: 2.5rem; counter-reset: step;
+      display: flex; flex-direction: column; gap: 0;
+      max-width: 600px;
+    }
+    .install-step {
+      display: flex; gap: 1.25rem; align-items: flex-start;
+      padding: 1.25rem 0; border-bottom: 1px solid var(--gray-100);
+      counter-increment: step;
+    }
+    .install-step:last-child { border-bottom: none; }
+    .install-step-num {
+      flex-shrink: 0;
+      width: 32px; height: 32px; border-radius: 50%;
+      background: var(--black); color: var(--white);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.8125rem; font-weight: 700; margin-top: 2px;
+    }
+    .install-step-content h4 {
+      font-size: 0.9375rem; font-weight: 600; margin-bottom: 0.25rem; color: var(--black);
+    }
+    .install-step-content p {
+      font-size: 0.8125rem; color: var(--gray-500); line-height: 1.6;
+    }
+    code {
+      font-family: var(--mono); font-size: 0.8125rem;
+      background: var(--gray-100); color: var(--black);
+      padding: 0.15rem 0.4rem; border-radius: 4px; border: 1px solid var(--gray-200);
+    }
+
+    .download-cards {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1rem; margin-top: 2.5rem;
+    }
+    .download-card {
+      border: 1px solid var(--gray-200); border-radius: 14px;
+      padding: 1.75rem; display: flex; flex-direction: column; gap: 0.75rem;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .download-card:hover { border-color: var(--black); transform: translateY(-2px); }
+    .download-card-icon { font-size: 2rem; }
+    .download-card h3 { font-size: 1rem; font-weight: 700; color: var(--black); }
+    .download-card p { font-size: 0.8125rem; color: var(--gray-500); flex: 1; line-height: 1.6; }
+    .download-card .btn-dl {
+      display: inline-flex; align-items: center; gap: 0.5rem; justify-content: center;
+      background: var(--black); color: var(--white);
+      font-family: var(--font); font-size: 0.875rem; font-weight: 600;
+      padding: 0.65rem 1.25rem; border-radius: 8px; border: none;
+      cursor: pointer; text-decoration: none; transition: background 0.15s;
+    }
+    .download-card .btn-dl:hover { background: var(--gray-900); }
+    .download-card .btn-dl-outline {
+      background: transparent; color: var(--black);
+      border: 1px solid var(--gray-300);
+    }
+    .download-card .btn-dl-outline:hover { background: var(--gray-50); border-color: var(--black); }
+
+    /* ── FOOTER ──────────────────────────────────────────────────────────── */
+    footer {
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding: 2rem;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 1rem;
+      font-size: 0.8125rem; color: var(--gray-500);
+    }
+    footer a { color: var(--gray-400); text-decoration: none; transition: color 0.15s; }
+    footer a:hover { color: var(--white); }
+    .footer-links { display: flex; gap: 1.5rem; }
+
+    /* ── REVEAL ANIMATION ────────────────────────────────────────────────── */
+    .reveal {
+      opacity: 0; transform: translateY(24px);
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }
+    .reveal.visible { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 600px) {
+      nav { padding: 0 1rem; }
+      .nav-links { display: none; }
+      section { padding: 4rem 1.25rem; }
+      .stats-bar { gap: 1.5rem; padding: 1.5rem; }
+      h1 { font-size: 2.6rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── NAV ─────────────────────────────────────────────────────────────────── -->
+<nav>
+  <a href="#" class="nav-logo">Scoop <span>/ Trade the Tweet</span></a>
+  <div class="nav-links">
+    <a href="#how-it-works">How it works</a>
+    <a href="#features">Features</a>
+    <a href="#tech">Tech</a>
+    <a href="#download" class="nav-cta">Download</a>
+  </div>
+</nav>
+
+<!-- ── HERO ─────────────────────────────────────────────────────────────────── -->
+<section class="hero">
+  <div class="hero-badge">
+    <span class="hero-badge-dot"></span>
+    Live on BNB Chain Mainnet
+  </div>
+
+  <h1>Trade<br/><span class="accent">the Tweet.</span></h1>
+
+  <p class="hero-sub">
+    A Chrome extension that detects prediction market links on X and lets you
+    buy or sell outcome shares — right inside the feed, no tab-switching required.
+  </p>
+
+  <div class="hero-actions">
+    <a href="#download" class="btn-primary">
+      <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M12 16L7 11h10l-5 5zm0 0V4M4 20h16"/></svg>
+      Download Extension
+    </a>
+    <a href="https://github.com/rizwanmoulvi/scoop" target="_blank" rel="noopener" class="btn-secondary">
+      <svg width="15" height="15" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+      View on GitHub
+    </a>
+  </div>
+
+  <!-- Mock UI demo -->
+  <div class="mock-container">
+    <div class="mock-tweet">
+      <div class="mock-tweet-header">
+        <div class="mock-avatar"></div>
+        <div>
+          <div class="mock-name">cryptotrader.eth</div>
+          <div class="mock-handle">@cryptotrader · 2m</div>
+        </div>
+      </div>
+      <div class="mock-text">
+        No way Satoshi moves BTC this year. Check the odds →
+        <span class="mock-link">probable.markets/event/satoshi-btc-2026</span>
+      </div>
+      <button class="mock-bet-btn" onclick="openPanel()">▲ Bet</button>
+    </div>
+
+    <div class="mock-connector" id="connector" style="display:none"></div>
+
+    <div class="mock-panel" id="mock-panel" style="display:none">
+      <div class="mock-panel-title">Probable · Live</div>
+      <div class="mock-panel-question">Will Satoshi move any Bitcoin before end of 2026?</div>
+      <div class="mock-prob-label">
+        <span>YES <strong id="yes-pct">62%</strong></span>
+        <span>NO <strong id="no-pct">38%</strong></span>
+      </div>
+      <div class="mock-bar"><div class="mock-bar-fill" id="bar-fill"></div></div>
+      <div class="mock-outcomes">
+        <div class="mock-outcome-btn active" id="btn-yes" onclick="selectOutcome('YES')">YES 62¢</div>
+        <div class="mock-outcome-btn" id="btn-no" onclick="selectOutcome('NO')">NO 38¢</div>
+      </div>
+      <div class="mock-input-row">
+        <span class="mock-input-val">25.00</span>
+        <span class="mock-input-token">USDT</span>
+      </div>
+      <button class="mock-submit">Buy YES $25.00</button>
+      <div class="mock-position">Held: <strong>4.6700 YES shares</strong></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── STATS ─────────────────────────────────────────────────────────────────── -->
+<div class="stats-bar reveal">
+  <div class="stat">
+    <div class="stat-value">BSC</div>
+    <div class="stat-label">Deployed on BNB Chain Mainnet</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">0 servers</div>
+    <div class="stat-label">Fully client-side, no backend</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">EIP-712</div>
+    <div class="stat-label">Non-custodial order signing</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">Buy + Sell</div>
+    <div class="stat-label">Full CLOB trading from your feed</div>
+  </div>
+</div>
+
+<!-- ── HOW IT WORKS ──────────────────────────────────────────────────────────── -->
+<section class="how-section" id="how-it-works">
+  <div class="section-inner">
+    <div class="reveal">
+      <p class="section-eyebrow">How it works</p>
+      <h2 class="section-title">From tweet to trade<br/>in four steps.</h2>
+      <p class="section-sub">Scoop removes every friction point between reading a prediction and acting on it.</p>
+    </div>
+
+    <div class="steps reveal">
+      <div class="step">
+        <div class="step-num">01</div>
+        <div class="step-icon">🔍</div>
+        <h3>Detect</h3>
+        <p>Scoop scans your X feed in real time. When it spots a Probable Markets link, it injects a Bet button inline — no page reload, no popups.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">02</div>
+        <div class="step-icon">🦊</div>
+        <h3>Connect</h3>
+        <p>One click connects MetaMask. Scoop checks you're on BSC Mainnet and handles all three token approvals automatically in a single flow.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">03</div>
+        <div class="step-icon">✍</div>
+        <h3>Sign</h3>
+        <p>Pick YES or NO, enter your USDT amount. Scoop builds an EIP-712 CLOB order and prompts MetaMask for a gasless signature — no transaction fee for signing.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">04</div>
+        <div class="step-icon">✓</div>
+        <h3>Done</h3>
+        <p>Your order goes live on Probable's off-chain orderbook. When it fills, your outcome tokens appear on-chain and your balance updates in the panel.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── FEATURES ──────────────────────────────────────────────────────────────── -->
+<section id="features">
+  <div class="section-inner">
+    <div class="reveal">
+      <p class="section-eyebrow">Features</p>
+      <h2 class="section-title">Everything you need.<br/>Nothing you don't.</h2>
+    </div>
+
+    <div class="features-grid reveal">
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <h3>Inline Bet Button</h3>
+        <p>Injected directly into X posts. Click without leaving the conversation thread.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📊</div>
+        <h3>Live Probability</h3>
+        <p>Real-time midpoint price from the orderbook rendered as a clean probability bar.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">💹</div>
+        <h3>Buy & Sell</h3>
+        <p>Full CLOB support — buy outcome shares or sell your existing position at the current bid.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔑</div>
+        <h3>Non-Custodial</h3>
+        <p>Your keys stay in MetaMask. Scoop never touches your private key — all signing happens in-wallet.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🏦</div>
+        <h3>On-Chain Balance</h3>
+        <p>Your held shares are read directly from the BSC ERC-1155 contract — no Probable dashboard required.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📝</div>
+        <h3>Paper Trading</h3>
+        <p>Toggle paper mode to simulate orders without spending real USDT. Great for testing.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔒</div>
+        <h3>Auto Approvals</h3>
+        <p>All three required token approvals (USDT, CTF tokens) handled automatically on first use.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🤖</div>
+        <h3>Twitter Bot</h3>
+        <p>Optional companion bot that posts live market updates and probability changes to X automatically.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── TECH ──────────────────────────────────────────────────────────────────── -->
+<section class="tech-section" id="tech">
+  <div class="section-inner">
+    <div class="reveal">
+      <p class="section-eyebrow" style="color:var(--gray-500)">Technical</p>
+      <h2 class="section-title">Built on open standards.</h2>
+      <p class="section-sub" style="color:var(--gray-400)">Chrome MV3 extension with no backend. All logic runs client-side in the browser.</p>
+    </div>
+
+    <div class="tech-chips reveal">
+      <span class="chip"><span class="chip-dot"></span>Chrome MV3</span>
+      <span class="chip"><span class="chip-dot"></span>React 18</span>
+      <span class="chip"><span class="chip-dot"></span>TypeScript</span>
+      <span class="chip"><span class="chip-dot"></span>Vite 6</span>
+      <span class="chip"><span class="chip-dot"></span>TailwindCSS</span>
+      <span class="chip"><span class="chip-dot"></span>Zustand</span>
+      <span class="chip"><span class="chip-dot"></span>ethers.js v6</span>
+      <span class="chip"><span class="chip-dot"></span>EIP-712</span>
+      <span class="chip"><span class="chip-dot"></span>BNB Chain (BSC)</span>
+      <span class="chip"><span class="chip-dot"></span>ERC-1155 CTF Tokens</span>
+      <span class="chip"><span class="chip-dot"></span>CLOB Orderbook</span>
+      <span class="chip"><span class="chip-dot"></span>HMAC-SHA256 L2 Auth</span>
+      <span class="chip"><span class="chip-dot"></span>Web Crypto API</span>
+      <span class="chip"><span class="chip-dot"></span>MIT License</span>
+    </div>
+
+    <div class="chain-card reveal">
+      <div class="chain-item">
+        <div class="chain-item-label">Contract</div>
+        <div class="chain-item-name">Probable CTF Exchange</div>
+        <div class="chain-item-addr">
+          <a href="https://bscscan.com/address/0xF99F5367ce708c66F0860B77B4331301A5597c86" target="_blank">
+            0xF99F5367...97c86 ↗
+          </a>
+        </div>
+      </div>
+      <div class="chain-item">
+        <div class="chain-item-label">Contract</div>
+        <div class="chain-item-name">CTF Token (ERC-1155)</div>
+        <div class="chain-item-addr">
+          <a href="https://bscscan.com/address/0x364d05055614B506e2b9A287E4ac34167204cA83" target="_blank">
+            0x364d0505...cA83 ↗
+          </a>
+        </div>
+      </div>
+      <div class="chain-item">
+        <div class="chain-item-label">Collateral</div>
+        <div class="chain-item-name">BSC-USD (USDT BEP-20)</div>
+        <div class="chain-item-addr">
+          <a href="https://bscscan.com/address/0x55d398326f99059fF775485246999027B3197955" target="_blank">
+            0x55d39832...7955 ↗
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── DOWNLOAD ───────────────────────────────────────────────────────────────── -->
+<section class="download-section" id="download">
+  <div class="section-inner">
+    <div class="reveal">
+      <p class="section-eyebrow">Get Scoop</p>
+      <h2 class="section-title">Ready in under<br/>two minutes.</h2>
+      <p class="section-sub">Scoop is an unpacked Chrome extension — no Chrome Web Store required. Just download, build or unzip, and load.</p>
+    </div>
+
+    <div class="download-cards reveal">
+      <!-- Source zip -->
+      <div class="download-card">
+        <div class="download-card-icon">📦</div>
+        <h3>Download Source ZIP</h3>
+        <p>Download the source code, run <code>npm install && npm run build</code>, then load the <code>dist/</code> folder in Chrome.</p>
+        <a href="https://github.com/rizwanmoulvi/scoop/archive/refs/heads/main.zip" class="btn-dl" download>
+          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path d="M12 16L7 11h10l-5 5zm0 0V4M4 20h16"/></svg>
+          Download ZIP
+        </a>
+      </div>
+
+      <!-- GitHub clone -->
+      <div class="download-card">
+        <div class="download-card-icon">
+          <svg width="36" height="36" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+        </div>
+        <h3>Clone from GitHub</h3>
+        <p>Clone the repo, install dependencies, build, and load. Full source available under MIT license — fork it, modify, ship it.</p>
+        <a href="https://github.com/rizwanmoulvi/scoop" target="_blank" rel="noopener" class="btn-dl btn-dl-outline">
+          View Repository ↗
+        </a>
+      </div>
+    </div>
+
+    <!-- Step-by-step install -->
+    <div class="install-steps reveal" style="margin-top:3rem">
+      <div class="install-step">
+        <div class="install-step-num">1</div>
+        <div class="install-step-content">
+          <h4>Download &amp; unzip</h4>
+          <p>Click <strong>Download ZIP</strong> above and unzip, or clone via <code>git clone https://github.com/rizwanmoulvi/scoop.git</code></p>
+        </div>
+      </div>
+      <div class="install-step">
+        <div class="install-step-num">2</div>
+        <div class="install-step-content">
+          <h4>Install and build</h4>
+          <p>In the project folder run <code>npm install</code> then <code>npm run build</code>. This generates the <code>dist/</code> folder.</p>
+        </div>
+      </div>
+      <div class="install-step">
+        <div class="install-step-num">3</div>
+        <div class="install-step-content">
+          <h4>Open Chrome Extensions</h4>
+          <p>Navigate to <code>chrome://extensions</code>, enable <strong>Developer mode</strong> (top-right toggle).</p>
+        </div>
+      </div>
+      <div class="install-step">
+        <div class="install-step-num">4</div>
+        <div class="install-step-content">
+          <h4>Load unpacked</h4>
+          <p>Click <strong>Load unpacked</strong> and select the <code>dist/</code> folder. Scoop appears in your extensions list.</p>
+        </div>
+      </div>
+      <div class="install-step">
+        <div class="install-step-num">5</div>
+        <div class="install-step-content">
+          <h4>Go to X and trade</h4>
+          <p>Browse X. When you see a Probable Markets link in a tweet, look for the Bet button — and trade.</p>
+        </div>
+      </div>
+    </div>
+
+    <p style="margin-top:2rem;font-size:0.8125rem;color:var(--gray-400)">
+      Requires MetaMask configured for <strong>BNB Smart Chain Mainnet</strong> (chainId 56) and some USDT (BEP-20) for collateral.
+    </p>
+  </div>
+</section>
+
+<!-- ── FOOTER ────────────────────────────────────────────────────────────────── -->
+<footer>
+  <div>
+    <strong style="color:var(--white)">Scoop</strong> — Built on BNB Chain · MIT License
+  </div>
+  <div class="footer-links">
+    <a href="https://github.com/rizwanmoulvi/scoop" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://github.com/rizwanmoulvi/scoop/blob/main/README.md" target="_blank" rel="noopener">Docs</a>
+    <a href="https://bscscan.com/address/0xF99F5367ce708c66F0860B77B4331301A5597c86" target="_blank" rel="noopener">BscScan</a>
+    <a href="https://probable.markets" target="_blank" rel="noopener">Probable.markets</a>
+  </div>
+</footer>
+
+<script>
+  // ── Mock panel interaction ────────────────────────────────────────────────
+  let panelOpen = false
+
+  function openPanel() {
+    if (panelOpen) return
+    panelOpen = true
+    const connector = document.getElementById('connector')
+    const panel = document.getElementById('mock-panel')
+    connector.style.display = 'block'
+    panel.style.display = 'block'
+    panel.style.opacity = '0'
+    panel.style.transform = 'translateY(8px)'
+    panel.style.transition = 'opacity 0.3s ease, transform 0.3s ease'
+    requestAnimationFrame(() => {
+      panel.style.opacity = '1'
+      panel.style.transform = 'translateY(0)'
+    })
+    setTimeout(() => {
+      document.getElementById('bar-fill').style.width = '62%'
+    }, 200)
+  }
+
+  function selectOutcome(outcome) {
+    document.getElementById('btn-yes').className = 'mock-outcome-btn' + (outcome === 'YES' ? ' active' : '')
+    document.getElementById('btn-no').className  = 'mock-outcome-btn' + (outcome === 'NO'  ? ' active' : '')
+  }
+
+  // ── Scroll reveal ─────────────────────────────────────────────────────────
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('visible')
+        // stagger children if it's a grid/list
+        const children = e.target.querySelectorAll('.step, .feature-card, .chain-item, .install-step, .download-card')
+        children.forEach((c, i) => {
+          c.style.transitionDelay = `${i * 80}ms`
+          c.classList.add('reveal', 'visible')
+        })
+      }
+    })
+  }, { threshold: 0.12 })
+
+  document.querySelectorAll('.reveal').forEach(el => observer.observe(el))
+</script>
+</body>
+</html>
