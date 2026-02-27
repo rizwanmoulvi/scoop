@@ -4,7 +4,7 @@ import type { Outcome } from '../../types/market'
 import { getAdapter } from '../../platforms'
 import type { ProbableAdapter } from '../../platforms/ProbableAdapter'
 import { connectWallet, ProxySigner, proxyRequest } from '../../wallet/wallet'
-import { checkProxyUsdtBalance, checkEoaUsdtBalance, depositUsdtToProxy } from '../../wallet/approvals'
+import { checkEoaUsdtBalance, checkEoaAllowanceForExchange, grantEoaApproval } from '../../wallet/approvals'
 
 function OutcomeButton({
   outcome,
@@ -61,18 +61,13 @@ export function OrderForm() {
 
   const isConnected = Boolean(wallet.address)
   const isProbable  = detectedMarket?.platform === 'probable'
-  // In paper trading mode, approvals + proxy are not required
-  const approvalsOk = !isProbable || paperTrading || Boolean(wallet.approvals?.allApproved)
-  const proxyOk     = !isProbable || paperTrading || Boolean(wallet.proxyAddress)
 
   const canSubmit =
     isConnected &&
     detectedMarket !== null &&
     amount !== '' &&
     parseFloat(amount) > 0 &&
-    order.status === 'idle' &&
-    approvalsOk &&
-    proxyOk
+    order.status === 'idle'
 
   // Use bestAsk from orderbook if valid (>0 and <1), otherwise fall back to midpoint probability.
   const yesMid = market?.probability ?? 0.5
@@ -114,15 +109,16 @@ export function OrderForm() {
         price: currentPrice,
         amount,
         expiration: 0,
-        // For Probable: proxy wallet is the on-chain maker; EOA is the signer
-        makerAddress: (isProbable && wallet.proxyAddress) ? wallet.proxyAddress : (wallet.address ?? ''),
+        // For Probable: EOA is both maker and signer (signatureType=0)
+        makerAddress: wallet.address ?? '',
       }
 
       const unsignedOrder = adapter.buildOrder(tradeInput)
 
-      // For Probable BUY orders: fund-on-demand — transfer exact USDT shortfall
-      // from EOA → proxy wallet, then place the order from the proxy.
-      if (detectedMarket.platform === 'probable' && !paperTrading && wallet.proxyAddress) {
+      // For Probable BUY orders (signatureType=0 EOA-direct flow):
+      // 1. verify EOA has enough USDT
+      // 2. if EOA allowance for CTF Exchange is insufficient, auto-approve MaxUint256
+      if (detectedMarket.platform === 'probable' && !paperTrading) {
         const extra       = unsignedOrder.extra as Record<string, unknown>
         const sideNum     = extra?.side as number   // 0 = BUY, 1 = SELL
         const makerAmtWei = BigInt(String(extra?.makerAmount ?? '0'))
@@ -134,35 +130,32 @@ export function OrderForm() {
         }
 
         if (sideNum === 0 && makerAmtWei > 0n) {
-          const [proxyBalance, eoaBalance] = await Promise.all([
-            checkProxyUsdtBalance(wallet.proxyAddress),
+          const [eoaBalance, eoaAllowance] = await Promise.all([
             checkEoaUsdtBalance(wallet.address!),
+            checkEoaAllowanceForExchange(wallet.address!),
           ])
-          const shortfall = makerAmtWei > proxyBalance ? makerAmtWei - proxyBalance : 0n
 
-          if (shortfall > 0n) {
-            if (eoaBalance < shortfall) {
-              throw new Error(
-                `Insufficient USDT in your wallet. Need ${fmtUsdt(shortfall)} USDT, have ${fmtUsdt(eoaBalance)} USDT.`
-              )
-            }
-            setOrder({ status: 'depositing' })
+          if (eoaBalance < makerAmtWei) {
+            throw new Error(
+              `Insufficient USDT. Need ${fmtUsdt(makerAmtWei)} USDT, have ${fmtUsdt(eoaBalance)} USDT.`
+            )
+          }
+
+          if (eoaAllowance < makerAmtWei) {
+            setOrder({ status: 'approving' })
             const signer = new ProxySigner(wallet.address!)
-            await depositUsdtToProxy(signer, wallet.proxyAddress, shortfall)
-            setWallet({ proxyUsdtBalance: fmtUsdt(makerAmtWei) })
+            await grantEoaApproval(signer, (msg) => setOrder({ status: 'approving', error: msg }))
+            setWallet({ eoaAllowanceOk: true })
           }
         }
       }
 
-      // For Probable: attach the correct clobTokenId and proxy address
+      // For Probable: attach the correct clobTokenId
       if (detectedMarket.platform === 'probable' && market?.clobTokenIds) {
         const tokenIndex = selectedOutcome === 'YES' ? 0 : 1
         const tokenId = market.clobTokenIds[tokenIndex]
         if (tokenId && unsignedOrder.extra) {
           (unsignedOrder.extra as Record<string, unknown>).tokenId = tokenId
-        }
-        if (wallet.proxyAddress && unsignedOrder.extra) {
-          (unsignedOrder.extra as Record<string, unknown>).proxyAddress = wallet.proxyAddress
         }
       }
 
@@ -277,13 +270,6 @@ export function OrderForm() {
         </div>
       )}
 
-      {/* Approvals gate for Probable */}
-      {isProbable && !approvalsOk && (
-        <div className="px-3 py-2 bg-yellow-50 border-2 border-yellow-400 rounded-2xl text-xs font-bold text-yellow-700">
-          ⚠️ Approve tokens above before placing an order
-        </div>
-      )}
-
       {/* Submit */}
       <button
         onClick={handleSubmit}
@@ -295,6 +281,7 @@ export function OrderForm() {
         }`}
       >
         {order.status === 'building'   && 'Building order…'}
+        {order.status === 'approving'  && 'Approving USDT…'}
         {order.status === 'depositing' && 'Depositing USDT…'}
         {order.status === 'signing'    && 'Sign in MetaMask…'}
         {order.status === 'submitting' && (paperTrading ? 'Simulating…' : 'Submitting…')}

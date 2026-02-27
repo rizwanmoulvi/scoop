@@ -35,6 +35,16 @@ export interface WalletState {
   proxyStep: string
   /** Human-readable USDT balance in proxy wallet (e.g. "12.50"), null if not yet checked */
   proxyUsdtBalance: string | null
+  /** Whether the EOA has sufficient USDT allowance for the CTF Exchange (null = not checked) */
+  eoaAllowanceOk: boolean | null
+  /** True while grantEoaApproval() is running */
+  isApprovingEoa: boolean
+  /** Status text shown during EOA approval flow */
+  eoaApprovalStep: string
+  /** True while withdrawFromProxy() is running */
+  isWithdrawingFromProxy: boolean
+  /** Status text shown during proxy withdrawal flow */
+  withdrawStep: string
 }
 
 export interface AppStore {
@@ -88,6 +98,11 @@ const DEFAULT_WALLET: WalletState = {
   isCreatingProxy: false,
   proxyStep: '',
   proxyUsdtBalance: null,
+  eoaAllowanceOk: null,
+  isApprovingEoa: false,
+  eoaApprovalStep: '',
+  isWithdrawingFromProxy: false,
+  withdrawStep: '',
 }
 
 const DEFAULT_ORDER: OrderState = {

@@ -247,3 +247,81 @@ export async function depositUsdtToProxy(
   }
   throw new Error(`Deposit not confirmed after 2 minutes — check BSCScan: bscscan.com/tx/${txHash}`)
 }
+
+// ─── EOA-direct approval helpers (signatureType=0 flow) ───────────────────────
+
+/**
+ * Check the EOA's USDT allowance for the CTF Exchange.
+ * Returns raw bigint with 18 decimals.
+ */
+export async function checkEoaAllowanceForExchange(eoaAddress: string): Promise<bigint> {
+  const data = encodeAllowanceCall(eoaAddress, CTF_EXCHANGE_ADDRESS)
+  try {
+    const result = await proxyRequest('eth_call', [{ to: USDT_ADDRESS, data }, 'latest'])
+    return decodeUint256(result as string)
+  } catch {
+    return 0n
+  }
+}
+
+/**
+ * Grant the CTF Exchange an unlimited USDT allowance directly from the EOA.
+ * This sends one MetaMask transaction (no gas for approval itself on BSC).
+ */
+export async function grantEoaApproval(
+  signer: WalletSigner,
+  onProgress?: (msg: string) => void
+): Promise<void> {
+  const eoaAddress = await signer.getAddress()
+  const data = encodeApproveData(CTF_EXCHANGE_ADDRESS)
+
+  onProgress?.('Approving USDT — confirm in MetaMask…')
+  const txHash = (await proxyRequest('eth_sendTransaction', [{
+    from: eoaAddress,
+    to:   USDT_ADDRESS,
+    data,
+    gas:  '0x186A0', // 100,000 gas
+  }])) as string
+
+  for (let i = 0; i < 40; i++) {
+    await new Promise<void>((r) => setTimeout(r, 3000))
+    const elapsed = (i + 1) * 3
+    onProgress?.(`Waiting for confirmation… ${elapsed}s`)
+    try {
+      const receipt = (await proxyRequest('eth_getTransactionReceipt', [txHash])) as {
+        status?: string
+      } | null
+      if (receipt?.status === '0x1') return
+      if (receipt?.status === '0x0') {
+        throw new Error('Approval transaction reverted — bscscan.com/tx/' + txHash)
+      }
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message.startsWith('Approval transaction reverted')) throw e
+    }
+  }
+  throw new Error(`Approval not confirmed after 2 minutes — bscscan.com/tx/${txHash}`)
+}
+
+/**
+ * Withdraw all USDT from the proxy wallet (Gnosis Safe) back to the EOA.
+ * Uses Safe's execTransaction via executeFromProxy.
+ */
+export async function withdrawFromProxy(
+  signer: WalletSigner,
+  proxyAddress: string,
+  onProgress?: (msg: string) => void
+): Promise<void> {
+  // First check how much USDT the proxy holds
+  const balance = await checkProxyUsdtBalance(proxyAddress)
+  if (balance === 0n) {
+    onProgress?.('Proxy wallet has no USDT to withdraw.')
+    return
+  }
+  const eoaAddress = await signer.getAddress()
+  const transferData = encodeTransferData(eoaAddress, balance)
+
+  onProgress?.(`Withdrawing USDT from proxy — confirm in MetaMask…`)
+  // executeFromProxy fires a Safe execTransaction, internally handles confirmation
+  await executeFromProxy(signer, proxyAddress, USDT_ADDRESS, transferData, onProgress)
+  onProgress?.('Withdrawal complete.')
+}

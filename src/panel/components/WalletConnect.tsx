@@ -2,8 +2,8 @@ import React from 'react'
 import { useStore } from '../store'
 import { connectWallet, shortenAddress, watchWalletEvents, ProxySigner } from '../../wallet/wallet'
 import { switchNetwork, PLATFORM_CHAINS } from '../../wallet/network'
-import { checkApprovals, grantApprovals, checkProxyUsdtBalance } from '../../wallet/approvals'
-import { detectProxyWallet, createProxyWallet, verifyProxyAddress } from '../../wallet/proxyWallet'
+import { checkProxyUsdtBalance, checkEoaAllowanceForExchange, grantEoaApproval, withdrawFromProxy } from '../../wallet/approvals'
+import { detectProxyWallet } from '../../wallet/proxyWallet'
 
 const BSC_CHAIN_ID = 56
 
@@ -15,10 +15,10 @@ export function WalletConnect() {
     const cleanup = watchWalletEvents(
       (accounts) => {
         if (accounts.length === 0) {
-          setWallet({ address: null, approvals: null, apiKey: null, proxyAddress: null })
+          setWallet({ address: null, approvals: null, apiKey: null, proxyAddress: null, eoaAllowanceOk: null })
         } else {
-          // New account — clear proxy/approvals so re-check triggers
-          setWallet({ address: accounts[0], proxyAddress: null, approvals: null, apiKey: null })
+          // New account — clear state so re-check triggers
+          setWallet({ address: accounts[0], proxyAddress: null, approvals: null, apiKey: null, eoaAllowanceOk: null })
         }
       },
       (chainId) => {
@@ -28,23 +28,25 @@ export function WalletConnect() {
     return cleanup
   }, [setWallet])
 
-  // ── Approval check (runs after proxy is confirmed) ──────────────────────────
+  // ── EOA allowance check (signatureType=0 flow) ──────────────────────────────────────────
 
-  const refreshApprovals = React.useCallback(
-    async (proxyAddress: string) => {
+  const refreshEoaStatus = React.useCallback(
+    async (eoaAddress: string) => {
       setWallet({ isCheckingApprovals: true })
       try {
-        const status = await checkApprovals(proxyAddress)
-        setWallet({ approvals: status, isCheckingApprovals: false })
+        const allowance = await checkEoaAllowanceForExchange(eoaAddress)
+        // Treat >= 2^128 as "effectively unlimited"
+        const ok = allowance >= BigInt('0x100000000000000000000000000000000')
+        setWallet({ eoaAllowanceOk: ok, isCheckingApprovals: false })
       } catch (err: unknown) {
-        console.warn('[Scoop] approval check failed:', err)
-        setWallet({ isCheckingApprovals: false })
+        console.warn('[Scoop] EOA allowance check failed:', err)
+        setWallet({ eoaAllowanceOk: false, isCheckingApprovals: false })
       }
     },
     [setWallet]
   )
 
-  // ── Proxy wallet detection ──────────────────────────────────────────────────
+  // ── Proxy wallet detection (for withdraw-from-proxy UI) ─────────────────────
 
   const refreshProxy = React.useCallback(
     async (eoaAddress: string) => {
@@ -54,7 +56,13 @@ export function WalletConnect() {
         if (proxyAddr) {
           console.log('[Scoop] proxy wallet found:', proxyAddr)
           setWallet({ proxyAddress: proxyAddr })
-          await refreshApprovals(proxyAddr)
+          // Check proxy USDT balance (for withdraw-from-proxy UI)
+          const bal = await checkProxyUsdtBalance(proxyAddr)
+          if (bal > 0n) {
+            const whole = bal / 10n ** 18n
+            const frac  = (bal % 10n ** 18n) * 100n / 10n ** 18n
+            setWallet({ proxyUsdtBalance: `${whole}.${frac.toString().padStart(2, '0')}` })
+          }
         } else {
           console.log('[Scoop] no proxy wallet found for', eoaAddress)
           setWallet({ proxyAddress: null })
@@ -62,57 +70,21 @@ export function WalletConnect() {
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
         console.warn('[Scoop] proxy wallet check failed:', msg)
-        setWallet({ error: `Proxy check failed: ${msg}` })
       }
     },
-    [setWallet, refreshApprovals]
+    [setWallet]
   )
-  // ── Auto-check proxy + approvals when address+chain are resolved ─────────────
+  // ── Auto-check EOA allowance + proxy when address+chain are resolved ─────────
   const lastCheckedRef = React.useRef<string>('')
-
-  const handleRecheck = () => {
-    if (!wallet.address) return
-    lastCheckedRef.current = '' // clear so the effect fires again
-    setWallet({ proxyAddress: null, approvals: null, error: null })
-  }
-
-  // ── Manual proxy address override ──────────────────────────────────────────
-  const [showManualInput, setShowManualInput] = React.useState(false)
-  const [manualProxy, setManualProxy]         = React.useState('')
-  const [verifying, setVerifying]             = React.useState(false)
-
-  const handleManualVerify = async () => {
-    const addr = manualProxy.trim()
-    if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) {
-      setWallet({ error: 'Invalid address format' })
-      return
-    }
-    setVerifying(true)
-    setWallet({ error: null })
-    try {
-      const ok = await verifyProxyAddress(addr)
-      if (ok) {
-        setShowManualInput(false)
-        setManualProxy('')
-        setWallet({ proxyAddress: addr })
-        await refreshApprovals(addr)
-      } else {
-        setWallet({ error: 'No contract found at that address on BSC' })
-      }
-    } catch (e: unknown) {
-      setWallet({ error: e instanceof Error ? e.message : 'Verification failed' })
-    } finally {
-      setVerifying(false)
-    }
-  }
 
   React.useEffect(() => {
     if (!wallet.address || wallet.chainId !== BSC_CHAIN_ID) return
     const key = `${wallet.address}-${wallet.chainId}`
     if (lastCheckedRef.current === key) return
     lastCheckedRef.current = key
-    refreshProxy(wallet.address)
-  }, [wallet.address, wallet.chainId, refreshProxy])
+    void refreshProxy(wallet.address)
+    void refreshEoaStatus(wallet.address)
+  }, [wallet.address, wallet.chainId, refreshProxy, refreshEoaStatus])
   // ── Connect ─────────────────────────────────────────────────────────────────
 
   const handleConnect = async () => {
@@ -127,71 +99,67 @@ export function WalletConnect() {
       if (requiredChain && connected.chainId !== requiredChain) {
         await switchNetwork(requiredChain)
         setWallet({ address: connected.address, chainId: requiredChain, isConnecting: false })
-        if (requiredChain === BSC_CHAIN_ID) await refreshProxy(connected.address)
+        if (requiredChain === BSC_CHAIN_ID) {
+          await refreshProxy(connected.address)
+          await refreshEoaStatus(connected.address)
+        }
         return
       }
 
       setWallet({ address: connected.address, chainId: connected.chainId, isConnecting: false })
-      if (connected.chainId === BSC_CHAIN_ID) await refreshProxy(connected.address)
+      if (connected.chainId === BSC_CHAIN_ID) {
+        await refreshProxy(connected.address)
+        await refreshEoaStatus(connected.address)
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to connect wallet'
       setWallet({ error: message, isConnecting: false })
     }
   }
 
-  // ── Create proxy wallet ─────────────────────────────────────────────────────
+  // ── Approve USDT for CTF Exchange (EOA-direct, one-time setup) ─────────────
 
-  const handleCreateProxy = async () => {
+  const handleEoaApprove = async () => {
     if (!wallet.address) return
-    setWallet({ isCreatingProxy: true, error: null, proxyStep: 'Starting…' })
+    setWallet({ isApprovingEoa: true, error: null, eoaApprovalStep: 'Starting…' })
     try {
       const signer = new ProxySigner(wallet.address)
-      const proxyAddr = await createProxyWallet(signer, (msg) => {
-        setWallet({ proxyStep: msg })
-      })
-      setWallet({ proxyAddress: proxyAddr, proxyStep: 'Checking approvals…' })
-      await refreshApprovals(proxyAddr)
-      setWallet({ isCreatingProxy: false, proxyStep: '' })
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to create proxy wallet'
-      setWallet({ isCreatingProxy: false, error: message, proxyStep: '' })
-    }
-  }
-
-  // ── Approve tokens ──────────────────────────────────────────────────────────
-
-  const handleApprove = async () => {
-    if (!wallet.address || !wallet.proxyAddress || !wallet.approvals) return
-    setWallet({ isApprovingTokens: true, error: null, approvalStep: 'Starting…' })
-    try {
-      const signer = new ProxySigner(wallet.address)
-      await grantApprovals(signer, wallet.proxyAddress, wallet.approvals, (msg) => {
-        setWallet({ approvalStep: msg })
-      })
-      setWallet({ approvalStep: 'Verifying…' })
-      await refreshApprovals(wallet.proxyAddress)
-      setWallet({ isApprovingTokens: false, approvalStep: '' })
+      await grantEoaApproval(signer, (msg) => setWallet({ eoaApprovalStep: msg }))
+      setWallet({ eoaAllowanceOk: true, isApprovingEoa: false, eoaApprovalStep: '' })
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Approval failed'
-      setWallet({ isApprovingTokens: false, error: message, approvalStep: '' })
+      setWallet({ isApprovingEoa: false, error: message, eoaApprovalStep: '' })
     }
   }
 
-  // ── Proxy USDT balance readout (refreshed after approvals + after each bet) ─
+  // ── Withdraw USDT from proxy wallet back to EOA ─────────────────────────────
+
+  const handleWithdrawFromProxy = async () => {
+    if (!wallet.address || !wallet.proxyAddress) return
+    setWallet({ isWithdrawingFromProxy: true, error: null, withdrawStep: 'Starting…' })
+    try {
+      const signer = new ProxySigner(wallet.address)
+      await withdrawFromProxy(signer, wallet.proxyAddress, (msg) => setWallet({ withdrawStep: msg }))
+      setWallet({ proxyUsdtBalance: null, isWithdrawingFromProxy: false, withdrawStep: '' })
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Withdrawal failed'
+      setWallet({ isWithdrawingFromProxy: false, error: message, withdrawStep: '' })
+    }
+  }
+
+  // ── Proxy USDT balance (for withdraw-from-proxy UI) ────────────────────────
 
   const refreshProxyUsdtBalance = React.useCallback(async () => {
     if (!wallet.proxyAddress) return
     const bal = await checkProxyUsdtBalance(wallet.proxyAddress)
-    const whole = bal / 10n ** 18n
-    const frac  = (bal % 10n ** 18n) * 100n / 10n ** 18n
-    setWallet({ proxyUsdtBalance: `${whole}.${frac.toString().padStart(2, '0')}` })
-  }, [wallet.proxyAddress, setWallet])
-
-  React.useEffect(() => {
-    if (wallet.approvals?.allApproved && wallet.proxyAddress) {
-      refreshProxyUsdtBalance()
+    if (bal > 0n) {
+      const whole = bal / 10n ** 18n
+      const frac  = (bal % 10n ** 18n) * 100n / 10n ** 18n
+      setWallet({ proxyUsdtBalance: `${whole}.${frac.toString().padStart(2, '0')}` })
+    } else {
+      setWallet({ proxyUsdtBalance: null })
     }
-  }, [wallet.approvals?.allApproved, wallet.proxyAddress, refreshProxyUsdtBalance])
+  }, [wallet.proxyAddress, setWallet])
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -224,8 +192,6 @@ export function WalletConnect() {
 
   const isProbable = detectedMarket?.platform === 'probable'
   const onBSC      = wallet.chainId === BSC_CHAIN_ID
-  const approvals  = wallet.approvals
-  const hasProxy   = Boolean(wallet.proxyAddress)
 
   return (
     <div className="space-y-2">
@@ -247,138 +213,78 @@ export function WalletConnect() {
         </div>
       )}
 
-      {/* Checking proxy / approvals */}
+      {/* Checking EOA allowance */}
       {isProbable && onBSC && wallet.isCheckingApprovals && !paperTrading && (
         <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border-2 border-brand-200 rounded-2xl text-xs font-bold text-brand-600">
           <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
           </svg>
-          {hasProxy ? 'Checking token approvals…' : 'Detecting proxy wallet…'}
+          Checking USDT approval…
         </div>
       )}
 
-      {/* No proxy wallet — creation needed */}
-      {isProbable && onBSC && !wallet.isCheckingApprovals && !wallet.isCreatingProxy && !hasProxy && !paperTrading && (
-        <div className="space-y-1.5">
-          {wallet.error ? (
-            <div className="px-3 py-2 bg-red-50 border-2 border-red-400 rounded-2xl text-xs font-bold text-red-700">
-              ⚠️ {wallet.error}
-            </div>
-          ) : (
-            <div className="px-3 py-2 bg-yellow-50 border-2 border-yellow-400 rounded-2xl text-xs font-bold text-yellow-700">
-              📳 A one-time proxy wallet is required by Probable to place orders.
-            </div>
-          )}
-          {showManualInput ? (
-            <div className="space-y-1.5">
-              <input
-                type="text"
-                value={manualProxy}
-                onChange={(e) => setManualProxy(e.target.value)}
-                placeholder="0x… proxy wallet address"
-                className="w-full px-3 py-2 rounded-2xl text-xs border-2 border-gray-300 focus:border-brand-400 outline-none font-mono"
-              />
-              <div className="flex gap-1.5">
-                <button
-                  onClick={() => { setShowManualInput(false); setManualProxy('') }}
-                  className="flex-1 py-1.5 px-3 rounded-2xl font-bold text-xs bg-white hover:bg-gray-50 text-gray-500 border-2 border-gray-300 transition-all"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleManualVerify}
-                  disabled={verifying}
-                  className="flex-1 py-1.5 px-3 rounded-2xl font-bold text-xs bg-brand-600 hover:bg-brand-700 text-white border-2 border-brand-700 transition-all disabled:opacity-50"
-                >
-                  {verifying ? 'Checking…' : '✓ Verify & Use'}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              <button
-                onClick={handleRecheck}
-                className="w-full py-1.5 px-4 rounded-2xl font-bold text-xs bg-white hover:bg-gray-50 active:translate-y-0.5 text-gray-600 border-2 border-gray-300 shadow-sm transition-all"
-              >
-                🔄 Re-check Proxy
-              </button>
-              <button
-                onClick={handleCreateProxy}
-                className="w-full py-2.5 px-4 rounded-2xl font-extrabold text-sm bg-brand-600 hover:bg-brand-700 active:translate-y-0.5 text-white border-2 border-brand-700 shadow-btn transition-all"
-              >
-                🔐 Create Proxy Wallet
-              </button>
-              <button
-                onClick={() => setShowManualInput(true)}
-                className="w-full py-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                Already have a proxy wallet? Enter address →
-              </button>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* Creating proxy wallet in progress */}
-      {isProbable && onBSC && wallet.isCreatingProxy && !paperTrading && (
-        <div className="flex items-center gap-2 px-3 py-2.5 bg-blue-50 border-2 border-brand-300 rounded-2xl text-xs font-bold text-brand-700">
-          <svg className="animate-spin h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-          </svg>
-          <span className="leading-snug">{wallet.proxyStep || 'Creating proxy wallet…'}</span>
-        </div>
-      )}
-
-      {/* Approvals needed (only shown once proxy exists) */}
-      {isProbable && onBSC && hasProxy && approvals && !approvals.allApproved && !wallet.isApprovingTokens && !paperTrading && (
+      {/* EOA approval needed */}
+      {isProbable && onBSC && !wallet.isCheckingApprovals && wallet.eoaAllowanceOk === false && !wallet.isApprovingEoa && !paperTrading && (
         <div className="space-y-1.5">
           <div className="px-3 py-2 bg-yellow-50 border-2 border-yellow-400 rounded-2xl text-xs font-bold text-yellow-700">
-            ⚠️ One-time token approvals required:
-            <ul className="mt-1 space-y-0.5 font-semibold">
-              {approvals.needsUSDTForCTF      && <li>• USDT → CTF Token contract</li>}
-              {approvals.needsUSDTForExchange && <li>• USDT → CTF Exchange</li>}
-              {approvals.needsCTFForExchange  && <li>• CTF Tokens → Exchange</li>}
-            </ul>
+            ⚠️ One-time setup: approve USDT for the exchange to enable trading.
           </div>
           <button
-            onClick={handleApprove}
+            onClick={handleEoaApprove}
             className="w-full py-2.5 px-4 rounded-2xl font-extrabold text-sm bg-brand-600 hover:bg-brand-700 active:translate-y-0.5 text-white border-2 border-brand-700 shadow-btn transition-all"
           >
-            ✅ Approve Tokens (one-time setup)
+            ✅ Approve USDT (one-time setup)
           </button>
         </div>
       )}
 
       {/* Approving in progress */}
-      {isProbable && onBSC && wallet.isApprovingTokens && !paperTrading && (
+      {isProbable && onBSC && wallet.isApprovingEoa && !paperTrading && (
         <div className="flex items-center gap-2 px-3 py-2.5 bg-blue-50 border-2 border-brand-300 rounded-2xl text-xs font-bold text-brand-700">
           <svg className="animate-spin h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
           </svg>
-          <span className="leading-snug">{wallet.approvalStep || 'Approving…'}</span>
+          <span className="leading-snug">{wallet.eoaApprovalStep || 'Approving…'}</span>
         </div>
       )}
 
-      {/* All approved */}
-      {isProbable && onBSC && hasProxy && (approvals?.allApproved || paperTrading) && (
+      {/* EOA approved / ready to trade */}
+      {isProbable && onBSC && (wallet.eoaAllowanceOk === true || paperTrading) && !wallet.isApprovingEoa && (
+        <div className="px-3 py-2 bg-green-50 border-2 border-green-300 rounded-2xl text-xs font-bold text-green-700">
+          {paperTrading
+            ? '📝 Paper mode — approvals not needed'
+            : '✅ USDT approved — ready to trade'}
+        </div>
+      )}
+
+      {/* USDT stuck in proxy wallet — withdraw to EOA */}
+      {isProbable && onBSC && wallet.proxyAddress && wallet.proxyUsdtBalance && !wallet.isWithdrawingFromProxy && !paperTrading && (
         <div className="space-y-1.5">
-          <div className="px-3 py-2 bg-green-50 border-2 border-green-300 rounded-2xl text-xs font-bold text-green-700">
-            {paperTrading
-              ? '📝 Paper mode — approvals not needed'
-              : '✅ Token approvals in place — ready to trade'}
+          <div className="flex items-center justify-between px-3 py-1.5 bg-amber-50 border border-amber-300 rounded-2xl text-xs text-amber-700">
+            <span>USDT in proxy wallet</span>
+            <span className="font-bold">{wallet.proxyUsdtBalance} USDT
+              <button onClick={refreshProxyUsdtBalance} className="ml-1.5 underline font-normal opacity-60 hover:opacity-100">↺</button>
+            </span>
           </div>
-          {/* Proxy USDT balance — auto-funded per bet, shown as info */}
-          {!paperTrading && wallet.proxyUsdtBalance !== null && (
-            <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-2xl text-xs text-blue-700">
-              <span>Proxy USDT</span>
-              <span className="font-bold">{wallet.proxyUsdtBalance} USDT
-                <button onClick={refreshProxyUsdtBalance} className="ml-1.5 underline font-normal opacity-60 hover:opacity-100">↺</button>
-              </span>
-            </div>
-          )}
+          <button
+            onClick={handleWithdrawFromProxy}
+            className="w-full py-1.5 px-4 rounded-2xl font-bold text-xs bg-amber-500 hover:bg-amber-600 active:translate-y-0.5 text-white border-2 border-amber-600 transition-all"
+          >
+            ↩ Withdraw USDT from proxy to wallet
+          </button>
+        </div>
+      )}
+
+      {/* Withdrawing in progress */}
+      {isProbable && onBSC && wallet.isWithdrawingFromProxy && !paperTrading && (
+        <div className="flex items-center gap-2 px-3 py-2.5 bg-blue-50 border-2 border-brand-300 rounded-2xl text-xs font-bold text-brand-700">
+          <svg className="animate-spin h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          <span className="leading-snug">{wallet.withdrawStep || 'Withdrawing…'}</span>
         </div>
       )}
 

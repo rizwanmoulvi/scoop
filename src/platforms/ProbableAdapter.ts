@@ -368,7 +368,7 @@ export class ProbableAdapter implements PredictionPlatform {
         takerAmount:   takerAmount.toString(),
         feeRateBps:    '175', // min allowed; must match signed EIP-712 value
         nonce:         '0',
-        signatureType: 1,    // PROB_GNOSIS_SAFE — proxy wallet is maker, EOA is signer
+        signatureType: 0,    // EOA direct — maker == signer == EOA (signatureType=1 broken: factory missing safeAddress() selector)
         taker:         '0x0000000000000000000000000000000000000000',
         tokenId:       '',   // injected by OrderForm from market.clobTokenIds
         // apiKey / apiSecret / apiPassphrase injected by OrderForm before submitOrder
@@ -712,11 +712,12 @@ export class ProbableAdapter implements PredictionPlatform {
         {
           method: 'POST',
           headers: {
-            prob_address:    eoaAddress,
-            prob_signature:  l2Sig,
-            prob_timestamp:  timestamp.toString(),
-            prob_api_key:    extra.apiKey,
-            prob_passphrase: extra.apiPassphrase,
+            prob_address:      eoaAddress,
+            prob_signature:    l2Sig,
+            prob_timestamp:    timestamp.toString(),
+            prob_api_key:      extra.apiKey,
+            prob_passphrase:   extra.apiPassphrase,
+            prob_account_type: 'eoa',  // required for signatureType=0 orders
           },
           body: bodyString,
         }
