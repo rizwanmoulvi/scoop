@@ -1,5 +1,6 @@
 import React from 'react'
 import { useStore } from '../store'
+import { useCtfBalance } from '../../hooks/useCtfBalance'
 
 const PLATFORM_LABELS: Record<string, string> = {
   probable: 'Probable',
@@ -32,7 +33,8 @@ function ProbabilityBar({ probability }: { probability: number }) {
 }
 
 export function MarketView() {
-  const { market, isLoadingMarket, marketError, detectedMarket } = useStore()
+  const { market, isLoadingMarket, marketError, detectedMarket, wallet } = useStore()
+  const ctfBalance = useCtfBalance(wallet.address, market?.clobTokenIds)
 
   if (isLoadingMarket) {
     return (
@@ -115,10 +117,27 @@ export function MarketView() {
       {/* Probability */}
       <ProbabilityBar probability={market.probability} />
 
+      {/* On-chain positions (EOA direct — no proxy needed) */}
+      {(ctfBalance.yes || ctfBalance.no) && (
+        <div className="flex gap-3 text-xs">
+          {ctfBalance.yes && (
+            <span className="text-green-400 font-medium">
+              YES <span className="font-mono">{ctfBalance.yes}</span>
+            </span>
+          )}
+          {ctfBalance.no && (
+            <span className="text-red-400 font-medium">
+              NO <span className="font-mono">{ctfBalance.no}</span>
+            </span>
+          )}
+          <span className="text-gray-500">shares held</span>
+        </div>
+      )}
+
       {/* Volume */}
       {market.volume && market.volume !== '0' && (
         <p className="text-xs text-gray-500">
-          Volume: <span className="text-gray-300">{market.volume} USDC</span>
+          Volume: <span className="text-gray-300">{market.volume} USDT</span>
         </p>
       )}
 

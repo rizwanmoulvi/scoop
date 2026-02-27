@@ -6,11 +6,13 @@ export interface TradeInput {
   outcome: Outcome
   /** Price as a decimal 0-1 */
   price: number
-  /** Amount in USDC (human-readable) */
+  /** Amount in USDT for BUY, or USDT-equivalent value of shares for SELL (human-readable) */
   amount: string
   /** Unix timestamp seconds */
   expiration: number
   makerAddress: string
+  /** 0 = BUY (default), 1 = SELL */
+  side?: 0 | 1
 }
 
 export interface Order {

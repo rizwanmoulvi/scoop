@@ -1,10 +1,11 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { useStore } from '../store'
 import type { Outcome } from '../../types/market'
 import { getAdapter } from '../../platforms'
 import type { ProbableAdapter } from '../../platforms/ProbableAdapter'
 import { connectWallet, ProxySigner, proxyRequest } from '../../wallet/wallet'
 import { checkEoaUsdtBalance, checkEoaApprovals, grantEoaApproval } from '../../wallet/approvals'
+import { useCtfBalance } from '../../hooks/useCtfBalance'
 
 function OutcomeButton({
   outcome,
@@ -37,6 +38,10 @@ function OutcomeButton({
 }
 
 export function OrderForm() {
+  const [
+    tradeMode, setTradeMode,
+  ] = useState<'buy' | 'sell'>('buy')
+
   const {
     wallet,
     detectedMarket,
@@ -54,8 +59,13 @@ export function OrderForm() {
     setWallet,
   } = useStore()
 
+  const ctfBalance = useCtfBalance(wallet.address, market?.clobTokenIds)
+  const heldShares  = selectedOutcome === 'YES' ? ctfBalance.yes : ctfBalance.no
+  const canSell     = Boolean(heldShares && parseFloat(heldShares) > 0)
+
   const isConnected = Boolean(wallet.address)
   const isProbable  = detectedMarket?.platform === 'probable'
+  const isSell      = tradeMode === 'sell'
 
   const canSubmit =
     isConnected &&
@@ -64,18 +74,29 @@ export function OrderForm() {
     parseFloat(amount) > 0 &&
     order.status === 'idle'
 
-  // Use bestAsk from orderbook if valid (>0 and <1), otherwise fall back to midpoint probability.
+  // BUY uses bestAsk (maker pays), SELL uses bestBid (maker receives)
   const yesMid = market?.probability ?? 0.5
   const noMid  = 1 - yesMid
   const yesAsk = orderBook?.yes?.bestAsk
   const noAsk  = orderBook?.no?.bestAsk
-  const yesPrice = (yesAsk != null && yesAsk > 0 && yesAsk < 1) ? yesAsk : yesMid
-  const noPrice  = (noAsk  != null && noAsk  > 0 && noAsk  < 1) ? noAsk  : noMid
+  const yesBid = orderBook?.yes?.bestBid
+  const noBid  = orderBook?.no?.bestBid
 
+  const yesBuyPrice  = (yesAsk != null && yesAsk > 0 && yesAsk < 1) ? yesAsk : yesMid
+  const noBuyPrice   = (noAsk  != null && noAsk  > 0 && noAsk  < 1) ? noAsk  : noMid
+  const yesSellPrice = (yesBid != null && yesBid > 0 && yesBid < 1) ? yesBid : yesMid
+  const noSellPrice  = (noBid  != null && noBid  > 0 && noBid  < 1) ? noBid  : noMid
+
+  const yesPrice = isSell ? yesSellPrice : yesBuyPrice
+  const noPrice  = isSell ? noSellPrice  : noBuyPrice
   const currentPrice = selectedOutcome === 'YES' ? yesPrice : noPrice
-  const estimatedShares =
+
+  // For BUY: est shares received. For SELL: est USDT received.
+  const estimatedValue =
     amount && parseFloat(amount) > 0 && currentPrice > 0
-      ? (parseFloat(amount) / currentPrice).toFixed(2)
+      ? isSell
+        ? (parseFloat(amount) * currentPrice).toFixed(2)   // shares * price = USDT
+        : (parseFloat(amount) / currentPrice).toFixed(2)   // USDT / price = shares
       : null
 
   const handleSubmit = async () => {
@@ -102,10 +123,13 @@ export function OrderForm() {
         platform: detectedMarket.platform,
         outcome: selectedOutcome,
         price: currentPrice,
+        // For SELL: amount is shares to sell (passed through directly to buildOrder).
+        // For BUY:  amount is USDT to spend.
+        // No pre-conversion here — avoids float round-trip precision loss.
         amount,
         expiration: 0,
-        // For Probable: EOA is both maker and signer (signatureType=0)
         makerAddress: wallet.address ?? '',
+        side: isSell ? 1 : 0,
       }
 
       const unsignedOrder = adapter.buildOrder(tradeInput)
@@ -125,6 +149,7 @@ export function OrderForm() {
         }
 
         if (sideNum === 0 && makerAmtWei > 0n) {
+          // BUY: check EOA has enough USDT
           const eoaBalance = await checkEoaUsdtBalance(wallet.address!)
 
           if (eoaBalance < makerAmtWei) {
@@ -133,6 +158,7 @@ export function OrderForm() {
             )
           }
         }
+        // SELL (sideNum === 1): no USDT needed — user spends CTF tokens
 
         // Check all 3 EOA approvals (USDT→CTFToken, USDT→Exchange, CTFTokens→Exchange)
         const eoaApprovals = await checkEoaApprovals(wallet.address!)
@@ -264,6 +290,28 @@ export function OrderForm() {
 
   return (
     <div className="space-y-4">
+      {/* BUY / SELL toggle — only shown for Probable (CLOB supports both sides) */}
+      {isProbable && (
+        <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+          <button
+            onClick={() => { setTradeMode('buy'); setAmount('') }}
+            className={`flex-1 py-1.5 text-xs font-medium transition-colors ${
+              !isSell ? 'bg-black text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            Buy
+          </button>
+          <button
+            onClick={() => { setTradeMode('sell'); setAmount('') }}
+            className={`flex-1 py-1.5 text-xs font-medium transition-colors ${
+              isSell ? 'bg-black text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            Sell
+          </button>
+        </div>
+      )}
+
       {/* Outcome selector */}
       <div>
         <label className="text-xs font-medium text-gray-400 uppercase tracking-widest mb-2 block">
@@ -287,43 +335,68 @@ export function OrderForm() {
 
       {/* Amount */}
       <div>
-        <label className="text-xs font-medium text-gray-400 uppercase tracking-widest mb-2 block">
-          Amount
-        </label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs font-medium text-gray-400 uppercase tracking-widest">
+            {isSell ? 'Shares to sell' : 'Amount'}
+          </label>
+          {isSell && heldShares && (
+            <span className="text-xs text-gray-400">
+              Held: <span className="text-black font-medium font-mono">{heldShares}</span>
+            </span>
+          )}
+        </div>
         <div className="relative">
           <input
             type="number"
-            min="1"
-            step="1"
+            min="0"
+            step="any"
             placeholder="0.00"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             className="w-full bg-white border border-gray-300 rounded-lg py-2.5 px-3 text-black placeholder-gray-300 focus:outline-none focus:border-black text-sm"
           />
           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">
-            USDC
+            {isSell ? 'shares' : 'USDT'}
           </span>
         </div>
 
         {/* Quick amounts */}
-        <div className="flex gap-1.5 mt-2">
-          {[10, 25, 50, 100].map((v) => (
-            <button
-              key={v}
-              onClick={() => setAmount(String(v))}
-              className="text-xs px-3 py-1.5 rounded-md font-medium bg-white hover:bg-gray-50 text-gray-600 border border-gray-200 hover:border-gray-400 transition-colors"
-            >
-              ${v}
-            </button>
-          ))}
-        </div>
+        {isSell && heldShares ? (
+          // SELL: quick-sell fractions of held shares
+          <div className="flex gap-1.5 mt-2">
+            {[25, 50, 75, 100].map((pct) => (
+              <button
+                key={pct}
+                onClick={() => setAmount(((parseFloat(heldShares) * pct) / 100).toFixed(4))}
+                className="text-xs px-3 py-1.5 rounded-md font-medium bg-white hover:bg-gray-50 text-gray-600 border border-gray-200 hover:border-gray-400 transition-colors"
+              >
+                {pct}%
+              </button>
+            ))}
+          </div>
+        ) : (
+          // BUY: quick USDT amounts
+          <div className="flex gap-1.5 mt-2">
+            {[10, 25, 50, 100].map((v) => (
+              <button
+                key={v}
+                onClick={() => setAmount(String(v))}
+                className="text-xs px-3 py-1.5 rounded-md font-medium bg-white hover:bg-gray-50 text-gray-600 border border-gray-200 hover:border-gray-400 transition-colors"
+              >
+                ${v}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Order summary */}
-      {estimatedShares && (
+      {estimatedValue && (
         <div className="text-xs flex justify-between bg-white border border-gray-100 rounded-lg px-3 py-2">
-          <span className="text-gray-400">Est. shares</span>
-          <span className="text-black font-medium tabular-nums">{estimatedShares}</span>
+          <span className="text-gray-400">{isSell ? 'Est. receive' : 'Est. shares'}</span>
+          <span className="text-black font-medium tabular-nums">
+            {isSell ? `${estimatedValue} USDT` : estimatedValue}
+          </span>
         </div>
       )}
 
@@ -343,8 +416,8 @@ export function OrderForm() {
         {order.status === 'signing'    && 'Sign in MetaMask'}
         {order.status === 'submitting' && (paperTrading ? 'Simulating' : 'Submitting')}
         {order.status === 'idle'       && (paperTrading
-          ? `Paper — ${selectedOutcome} $${amount || '0'}`
-          : `${selectedOutcome} $${amount || '0'}`)}
+          ? `Paper — ${isSell ? 'Sell' : selectedOutcome} ${isSell ? `${amount || '0'} shares` : `$${amount || '0'}`}`
+          : `${isSell ? 'Sell' : selectedOutcome} ${isSell ? `${amount || '0'} shares` : `$${amount || '0'}`}`)}
         {order.status === 'success'    && (paperTrading ? 'Paper trade simulated' : (order.response?.message ?? 'Order placed'))}
         {order.status === 'error'      && 'Retry'}
       </button>

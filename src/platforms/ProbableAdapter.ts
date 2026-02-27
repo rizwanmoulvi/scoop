@@ -298,8 +298,11 @@ export class ProbableAdapter implements PredictionPlatform {
     // YES bet → BUY YES tokens (tokenId[0])
     // NO bet  → BUY NO tokens  (tokenId[1])
     // Both are side=0 (BUY). The tokenId distinguishes YES vs NO.
-    const side   = 0  // BUY
-    const amount = parseFloat(params.amount)  // USDC to spend (BUY) or receive (SELL)
+    // For SELL: side=1, makerAmount=tokens, takerAmount=USDT.
+    const side   = params.side ?? 0
+    // BUY:  amount = USDT to spend (makerAmount). Shares = amount / price.
+    // SELL: amount = shares to sell (makerAmount). USDT = amount * price.
+    const amount = parseFloat(params.amount)
 
     // Clamp price to valid range
     const rawPrice = Math.min(Math.max(params.price, 0.0001), 0.9999)
@@ -322,14 +325,12 @@ export class ProbableAdapter implements PredictionPlatform {
 
     const price = roundNormal(rawPrice, RC.price)
 
-    // size = number of outcome tokens (derived from amount USDC the user wants to spend/receive)
-    const size = amount / price
-
     let rawMakerAmt: number
     let rawTakerAmt: number
 
     if (side === 0) {
-      // BUY: user spends USDC (makerAmount), receives tokens (takerAmount)
+      // BUY: user spends USDT (makerAmount), receives tokens (takerAmount)
+      const size  = amount / price
       rawTakerAmt = roundDown(size, RC.size)
       rawMakerAmt = rawTakerAmt * price
       if (decimalPlaces(rawMakerAmt) > RC.amount) {
@@ -337,9 +338,9 @@ export class ProbableAdapter implements PredictionPlatform {
         if (decimalPlaces(rawMakerAmt) > RC.amount) rawMakerAmt = roundDown(rawMakerAmt, RC.amount)
       }
     } else {
-      // SELL: user spends tokens (makerAmount), receives USDC (takerAmount)
-      rawMakerAmt = roundDown(size, RC.size)
-      rawTakerAmt = rawMakerAmt * price
+      // SELL: amount IS the share count (no division needed — avoids float round-trip error)
+      rawMakerAmt = roundDown(amount, RC.size)  // shares to sell
+      rawTakerAmt = rawMakerAmt * price          // USDT to receive
       if (decimalPlaces(rawTakerAmt) > RC.amount) {
         rawTakerAmt = roundUp(rawTakerAmt, RC.amount + 4)
         if (decimalPlaces(rawTakerAmt) > RC.amount) rawTakerAmt = roundDown(rawTakerAmt, RC.amount)
@@ -502,8 +503,10 @@ export class ProbableAdapter implements PredictionPlatform {
     const makerAddress = extra.signatureType === 0 ? eoaAddress : order.makerAddress
 
     // Verify the maker has enough USDT balance + allowance before prompting MetaMask.
-    // This converts PAS-4205 into a human-readable error message.
-    await this.verifyOrderPreconditions(makerAddress, BigInt(extra.makerAmount))
+    // Only for BUY orders (side=0) — for SELL, makerAmount is CTF tokens, not USDT.
+    if (extra.side === 0) {
+      await this.verifyOrderPreconditions(makerAddress, BigInt(extra.makerAmount))
+    }
 
     // Fetch the contract's minimum valid nonce for this maker.
     // In the Probable CLOB, nonce is a cancel-group token (not a per-order counter).

@@ -140,7 +140,7 @@ export function OrderForm() {
       {/* Amount */}
       <div>
         <label className="text-xs text-gray-400 uppercase tracking-wider mb-2 block">
-          Amount (USDC)
+          Amount (USDT)
         </label>
         <div className="relative">
           <input
@@ -153,7 +153,7 @@ export function OrderForm() {
             className="w-full bg-gray-800 border border-gray-700 rounded-lg py-2.5 px-3 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 text-sm"
           />
           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
-            USDC
+            USDT
           </span>
         </div>
 
