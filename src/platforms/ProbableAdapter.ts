@@ -299,38 +299,49 @@ export class ProbableAdapter implements PredictionPlatform {
     const side   = 0  // BUY
     const amount = parseFloat(params.amount)  // USDC to spend (BUY) or receive (SELL)
 
-    // Clamp price and round to 0.01 tick size (2 decimal places)
-    const price = Math.round(Math.min(Math.max(params.price, 0.0001), 0.9999) * 100) / 100
+    // Clamp price to valid range
+    const rawPrice = Math.min(Math.max(params.price, 0.0001), 0.9999)
 
-    // --- Compute BUY / SELL amounts following the Probable tick-size spec ----
-    //
-    // BUY:  user spends `amount` USDC, receives `amount / price` tokens
-    //   makerAmount = USDC to spend    = round(amount, 4 dp)
-    //   takerAmount = tokens received  = roundDown(amount / price, 2 dp)
-    //
-    // SELL: user spends `amount / price` tokens, receives `amount` USDC
-    //   makerAmount = tokens to spend  = roundDown(amount / price, 2 dp)
-    //   takerAmount = USDC to receive  = round(amount, 4 dp)
-    //
-    // Both values are then converted to 18-decimal bigints (BSC USDT = 18 dec).
-    // -------------------------------------------------------------------------
+    // --- Rounding helpers (matching official clob-examples spec) -------------
+    const decimalPlaces = (n: number) => {
+      if (Number.isInteger(n)) return 0
+      const s = n.toString().split('.')
+      return s.length <= 1 ? 0 : s[1]!.length
+    }
+    const roundDown   = (n: number, dp: number) =>
+      decimalPlaces(n) <= dp ? n : Math.floor(n * 10 ** dp) / 10 ** dp
+    const roundUp     = (n: number, dp: number) =>
+      decimalPlaces(n) <= dp ? n : Math.ceil(n  * 10 ** dp) / 10 ** dp
+    const roundNormal = (n: number, dp: number) =>
+      decimalPlaces(n) <= dp ? n : Math.round((n + Number.EPSILON) * 10 ** dp) / 10 ** dp
 
-    const roundDown2 = (n: number) => Math.floor(n * 100)       / 100
-    const round4     = (n: number) => Math.round(n * 10_000)    / 10_000
+    // Rounding config for 0.01 tick size
+    const RC = { price: 2, size: 2, amount: 4 }
 
-    const tokens = roundDown2(amount / price)  // number of CTF tokens
+    const price = roundNormal(rawPrice, RC.price)
+
+    // size = number of outcome tokens (derived from amount USDC the user wants to spend/receive)
+    const size = amount / price
 
     let rawMakerAmt: number
     let rawTakerAmt: number
 
     if (side === 0) {
-      // BUY: spend USDC → receive tokens
-      rawMakerAmt = round4(tokens * price)   // USDC actually spent (= price × tokens)
-      rawTakerAmt = tokens                    // tokens received
+      // BUY: user spends USDC (makerAmount), receives tokens (takerAmount)
+      rawTakerAmt = roundDown(size, RC.size)
+      rawMakerAmt = rawTakerAmt * price
+      if (decimalPlaces(rawMakerAmt) > RC.amount) {
+        rawMakerAmt = roundUp(rawMakerAmt, RC.amount + 4)
+        if (decimalPlaces(rawMakerAmt) > RC.amount) rawMakerAmt = roundDown(rawMakerAmt, RC.amount)
+      }
     } else {
-      // SELL: spend tokens → receive USDC
-      rawMakerAmt = tokens                    // tokens spent
-      rawTakerAmt = round4(tokens * price)   // USDC received
+      // SELL: user spends tokens (makerAmount), receives USDC (takerAmount)
+      rawMakerAmt = roundDown(size, RC.size)
+      rawTakerAmt = rawMakerAmt * price
+      if (decimalPlaces(rawTakerAmt) > RC.amount) {
+        rawTakerAmt = roundUp(rawTakerAmt, RC.amount + 4)
+        if (decimalPlaces(rawTakerAmt) > RC.amount) rawTakerAmt = roundDown(rawTakerAmt, RC.amount)
+      }
     }
 
     // Convert to 18-decimal bigints using string-based parseUnits (avoids float rounding)
@@ -386,7 +397,7 @@ export class ProbableAdapter implements PredictionPlatform {
       takerAmount:   BigInt(extra.takerAmount),
       expiration:    BigInt(order.expiration),
       nonce:         BigInt(extra.nonce),
-      feeRateBps:    0n,   // MUST be 0 when signing — contract hash uses 0; API fee rate is separate
+      feeRateBps:    BigInt(extra.feeRateBps),
       side:          extra.side,
       signatureType: extra.signatureType,
     }
@@ -394,7 +405,7 @@ export class ProbableAdapter implements PredictionPlatform {
     console.log('[Scoop] signOrder EIP-712 value:', {
       salt, maker: order.makerAddress, signer: eoaAddress,
       tokenId: extra.tokenId, makerAmount: extra.makerAmount, takerAmount: extra.takerAmount,
-      expiration: order.expiration, nonce: extra.nonce, feeRateBps: 0,
+      expiration: order.expiration, nonce: extra.nonce, feeRateBps: extra.feeRateBps,
       side: extra.side, signatureType: extra.signatureType,
     })
 
@@ -554,11 +565,11 @@ export class ProbableAdapter implements PredictionPlatform {
         side:          extra.side === 0 ? 'BUY' : 'SELL',
         expiration:    String(order.expiration),
         nonce:         extra.nonce,
-        feeRateBps:    '175', // API minimum; signed hash always uses 0 (see signOrder)
+        feeRateBps:    extra.feeRateBps,
         signatureType: extra.signatureType,
         signature:     order.signature,
       },
-      owner:     eoaAddress,     // MUST be EOA address — matches clob-examples reference
+      owner:     proxyAddress,   // proxy wallet address (signedOrder.maker)
       orderType: 'GTC',
     }
 
