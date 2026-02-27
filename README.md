@@ -6,6 +6,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](./LICENSE)
 [![BNB Chain](https://img.shields.io/badge/chain-BNB%20Mainnet-yellow)](https://bscscan.com)
 [![Built with Vite](https://img.shields.io/badge/built%20with-Vite%206-646cff)](https://vitejs.dev)
+[![Landing Page](https://img.shields.io/badge/landing%20page-live-black)](https://rizwanmoulvi.github.io/scoop/)
+
+**[→ Landing Page](https://rizwanmoulvi.github.io/scoop/)** · [Download ZIP](https://github.com/rizwanmoulvi/scoop/archive/refs/heads/main.zip)
 
 ---
 
