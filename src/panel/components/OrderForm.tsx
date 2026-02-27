@@ -4,7 +4,7 @@ import type { Outcome } from '../../types/market'
 import { getAdapter } from '../../platforms'
 import type { ProbableAdapter } from '../../platforms/ProbableAdapter'
 import { connectWallet, ProxySigner } from '../../wallet/wallet'
-import { checkProxyUsdtBalance, depositUsdtToProxy } from '../../wallet/approvals'
+import { checkProxyUsdtBalance, checkEoaUsdtBalance, depositUsdtToProxy } from '../../wallet/approvals'
 
 function OutcomeButton({
   outcome,
@@ -110,25 +110,41 @@ export function OrderForm() {
 
       const unsignedOrder = adapter.buildOrder(tradeInput)
 
-      // For Probable BUY orders: auto-deposit the exact USDT shortfall into proxy
+      // For Probable BUY orders: fund-on-demand — transfer exact USDT shortfall
+      // from EOA → proxy wallet, then place the order from the proxy.
       if (detectedMarket.platform === 'probable' && !paperTrading && wallet.proxyAddress) {
         const extra       = unsignedOrder.extra as Record<string, unknown>
         const sideNum     = extra?.side as number   // 0 = BUY, 1 = SELL
         const makerAmtWei = BigInt(String(extra?.makerAmount ?? '0'))
+
+        const fmtUsdt = (wei: bigint) => {
+          const whole = wei / 10n ** 18n
+          const frac  = (wei % 10n ** 18n) * 100n / 10n ** 18n
+          return `${whole}.${frac.toString().padStart(2, '0')}`
+        }
+
         if (sideNum === 0 && makerAmtWei > 0n) {
-          const proxyBalance = await checkProxyUsdtBalance(wallet.proxyAddress)
-          const shortfall    = makerAmtWei > proxyBalance ? makerAmtWei - proxyBalance : 0n
+          const [proxyBalance, eoaBalance] = await Promise.all([
+            checkProxyUsdtBalance(wallet.proxyAddress),
+            checkEoaUsdtBalance(wallet.address!),
+          ])
+          const shortfall = makerAmtWei > proxyBalance ? makerAmtWei - proxyBalance : 0n
+
           if (shortfall > 0n) {
+            // Guard: make sure EOA has enough USDT to cover the shortfall
+            if (eoaBalance < shortfall) {
+              const need = fmtUsdt(shortfall)
+              const have = fmtUsdt(eoaBalance)
+              throw new Error(
+                `Insufficient USDT in your wallet. Need ${need} USDT, have ${have} USDT.`
+              )
+            }
+
             setOrder({ status: 'depositing' })
             const signer = new ProxySigner(wallet.address)
             await depositUsdtToProxy(signer, wallet.proxyAddress, shortfall)
-            // Update proxy balance display in wallet panel
-            const fmt = (wei: bigint) => {
-              const whole = wei / 10n ** 18n
-              const frac  = (wei % 10n ** 18n) * 100n / 10n ** 18n
-              return `${whole}.${frac.toString().padStart(2, '0')}`
-            }
-            setWallet({ proxyUsdtBalance: fmt(makerAmtWei) })
+            // Update proxy balance display: proxy now holds at least makerAmtWei
+            setWallet({ proxyUsdtBalance: fmtUsdt(makerAmtWei) })
           }
         }
       }
