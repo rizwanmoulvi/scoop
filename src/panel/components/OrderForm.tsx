@@ -4,7 +4,7 @@ import type { Outcome } from '../../types/market'
 import { getAdapter } from '../../platforms'
 import type { ProbableAdapter } from '../../platforms/ProbableAdapter'
 import { connectWallet, ProxySigner, proxyRequest } from '../../wallet/wallet'
-import { checkEoaUsdtBalance } from '../../wallet/approvals'
+import { checkProxyUsdtBalance, checkEoaUsdtBalance, depositUsdtToProxy } from '../../wallet/approvals'
 
 function OutcomeButton({
   outcome,
@@ -56,13 +56,14 @@ export function OrderForm() {
     setOrder,
     resetOrder,
     setApiKey,
+    setWallet,
   } = useStore()
 
   const isConnected = Boolean(wallet.address)
   const isProbable  = detectedMarket?.platform === 'probable'
-  // signatureType=0 (EOA direct): no proxy or proxy approvals needed
-  const approvalsOk = true
-  const proxyOk     = true
+  // In paper trading mode, approvals + proxy are not required
+  const approvalsOk = !isProbable || paperTrading || Boolean(wallet.approvals?.allApproved)
+  const proxyOk     = !isProbable || paperTrading || Boolean(wallet.proxyAddress)
 
   const canSubmit =
     isConnected &&
@@ -113,15 +114,15 @@ export function OrderForm() {
         price: currentPrice,
         amount,
         expiration: 0,
-        // For Probable (signatureType=0): EOA is the maker — no proxy address needed
-        makerAddress: wallet.address ?? '',
+        // For Probable: proxy wallet is the on-chain maker; EOA is the signer
+        makerAddress: (isProbable && wallet.proxyAddress) ? wallet.proxyAddress : (wallet.address ?? ''),
       }
 
       const unsignedOrder = adapter.buildOrder(tradeInput)
 
-      // For Probable BUY orders (signatureType=0): EOA is the maker — check EOA
-      // balance directly and ensure EOA has approved CTF Exchange for USDT.
-      if (detectedMarket.platform === 'probable' && !paperTrading) {
+      // For Probable BUY orders: fund-on-demand — transfer exact USDT shortfall
+      // from EOA → proxy wallet, then place the order from the proxy.
+      if (detectedMarket.platform === 'probable' && !paperTrading && wallet.proxyAddress) {
         const extra       = unsignedOrder.extra as Record<string, unknown>
         const sideNum     = extra?.side as number   // 0 = BUY, 1 = SELL
         const makerAmtWei = BigInt(String(extra?.makerAmount ?? '0'))
@@ -133,50 +134,35 @@ export function OrderForm() {
         }
 
         if (sideNum === 0 && makerAmtWei > 0n) {
-          const USDT         = '0x55d398326f99059fF775485246999027B3197955'
-          const CTF_EXCHANGE = '0xF99F5367ce708c66F0860B77B4331301A5597c86'
-          const padAddr = (a: string) => a.slice(2).toLowerCase().padStart(64, '0')
+          const [proxyBalance, eoaBalance] = await Promise.all([
+            checkProxyUsdtBalance(wallet.proxyAddress),
+            checkEoaUsdtBalance(wallet.address!),
+          ])
+          const shortfall = makerAmtWei > proxyBalance ? makerAmtWei - proxyBalance : 0n
 
-          // 1. Check EOA USDT balance
-          const eoaBalance = await checkEoaUsdtBalance(wallet.address!)
-          if (eoaBalance < makerAmtWei) {
-            throw new Error(
-              `Insufficient USDT in your wallet. Need ${fmtUsdt(makerAmtWei)} USDT, have ${fmtUsdt(eoaBalance)} USDT.`
-            )
-          }
-
-          // 2. Check EOA USDT allowance for CTF Exchange; approve MaxUint256 if needed
-          const allowanceData = '0xdd62ed3e' + padAddr(wallet.address!) + padAddr(CTF_EXCHANGE)
-          const allowanceHex  = (await proxyRequest('eth_call', [{ to: USDT, data: allowanceData }, 'latest'])) as string
-          const allowance     = BigInt(allowanceHex || '0')
-
-          if (allowance < makerAmtWei) {
-            setOrder({ status: 'approving' })
-            const approveData = '0x095ea7b3' + padAddr(CTF_EXCHANGE) +
-              'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
-            const approveTxHash = (await proxyRequest('eth_sendTransaction', [{
-              from: wallet.address!,
-              to:   USDT,
-              data: approveData,
-              gas:  '0x186A0',
-            }])) as string
-            // Wait for approval receipt
-            for (let i = 0; i < 40; i++) {
-              await new Promise<void>(r => setTimeout(r, 3000))
-              const receipt = (await proxyRequest('eth_getTransactionReceipt', [approveTxHash])) as { status?: string } | null
-              if (receipt?.status === '0x1') break
-              if (receipt?.status === '0x0') throw new Error('USDT approval transaction reverted')
+          if (shortfall > 0n) {
+            if (eoaBalance < shortfall) {
+              throw new Error(
+                `Insufficient USDT in your wallet. Need ${fmtUsdt(shortfall)} USDT, have ${fmtUsdt(eoaBalance)} USDT.`
+              )
             }
+            setOrder({ status: 'depositing' })
+            const signer = new ProxySigner(wallet.address!)
+            await depositUsdtToProxy(signer, wallet.proxyAddress, shortfall)
+            setWallet({ proxyUsdtBalance: fmtUsdt(makerAmtWei) })
           }
         }
       }
 
-      // For Probable: attach the correct clobTokenId for the chosen outcome
+      // For Probable: attach the correct clobTokenId and proxy address
       if (detectedMarket.platform === 'probable' && market?.clobTokenIds) {
         const tokenIndex = selectedOutcome === 'YES' ? 0 : 1
         const tokenId = market.clobTokenIds[tokenIndex]
         if (tokenId && unsignedOrder.extra) {
           (unsignedOrder.extra as Record<string, unknown>).tokenId = tokenId
+        }
+        if (wallet.proxyAddress && unsignedOrder.extra) {
+          (unsignedOrder.extra as Record<string, unknown>).proxyAddress = wallet.proxyAddress
         }
       }
 
