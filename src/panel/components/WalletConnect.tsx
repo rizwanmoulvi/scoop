@@ -2,7 +2,7 @@ import React from 'react'
 import { useStore } from '../store'
 import { connectWallet, shortenAddress, watchWalletEvents, ProxySigner } from '../../wallet/wallet'
 import { switchNetwork, PLATFORM_CHAINS } from '../../wallet/network'
-import { checkProxyUsdtBalance, checkEoaAllowanceForExchange, grantEoaApproval, withdrawFromProxy } from '../../wallet/approvals'
+import { checkProxyUsdtBalance, checkEoaApprovals, grantEoaApproval, withdrawFromProxy } from '../../wallet/approvals'
 import { detectProxyWallet } from '../../wallet/proxyWallet'
 
 const BSC_CHAIN_ID = 56
@@ -34,12 +34,10 @@ export function WalletConnect() {
     async (eoaAddress: string) => {
       setWallet({ isCheckingApprovals: true })
       try {
-        const allowance = await checkEoaAllowanceForExchange(eoaAddress)
-        // Treat >= 2^128 as "effectively unlimited"
-        const ok = allowance >= BigInt('0x100000000000000000000000000000000')
-        setWallet({ eoaAllowanceOk: ok, isCheckingApprovals: false })
+        const status = await checkEoaApprovals(eoaAddress)
+        setWallet({ eoaAllowanceOk: status.allApproved, isCheckingApprovals: false })
       } catch (err: unknown) {
-        console.warn('[Scoop] EOA allowance check failed:', err)
+        console.warn('[Scoop] EOA approval check failed:', err)
         setWallet({ eoaAllowanceOk: false, isCheckingApprovals: false })
       }
     },
@@ -228,13 +226,13 @@ export function WalletConnect() {
       {isProbable && onBSC && !wallet.isCheckingApprovals && wallet.eoaAllowanceOk === false && !wallet.isApprovingEoa && !paperTrading && (
         <div className="space-y-1.5">
           <div className="px-3 py-2 bg-yellow-50 border-2 border-yellow-400 rounded-2xl text-xs font-bold text-yellow-700">
-            ⚠️ One-time setup: approve USDT for the exchange to enable trading.
+            ⚠️ One-time setup: approve 3 contracts to enable EOA trading.
           </div>
           <button
             onClick={handleEoaApprove}
             className="w-full py-2.5 px-4 rounded-2xl font-extrabold text-sm bg-brand-600 hover:bg-brand-700 active:translate-y-0.5 text-white border-2 border-brand-700 shadow-btn transition-all"
           >
-            ✅ Approve USDT (one-time setup)
+            ✅ Set up approvals (one-time, up to 3 txs)
           </button>
         </div>
       )}
@@ -255,7 +253,7 @@ export function WalletConnect() {
         <div className="px-3 py-2 bg-green-50 border-2 border-green-300 rounded-2xl text-xs font-bold text-green-700">
           {paperTrading
             ? '📝 Paper mode — approvals not needed'
-            : '✅ USDT approved — ready to trade'}
+            : '✅ Approved — ready to trade'}
         </div>
       )}
 

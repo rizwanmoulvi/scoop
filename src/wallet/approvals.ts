@@ -250,9 +250,52 @@ export async function depositUsdtToProxy(
 
 // ─── EOA-direct approval helpers (signatureType=0 flow) ───────────────────────
 
+export interface EoaApprovalStatus {
+  needsUSDTForCTFToken: boolean
+  needsUSDTForExchange: boolean
+  needsCTFForExchange:  boolean
+  allApproved: boolean
+}
+
+// Treat any allowance >= 2^128 as "effectively unlimited" (set-once pattern).
+const EOA_THRESHOLD = BigInt('0x100000000000000000000000000000000')
+
 /**
- * Check the EOA's USDT allowance for the CTF Exchange.
- * Returns raw bigint with 18 decimals.
+ * Check all three EOA approval states required for EOA-direct trading:
+ *   1. USDT → CTF Token contract  (required for position crediting)
+ *   2. USDT → CTF Exchange        (required for BUY orders)
+ *   3. CTF Tokens → CTF Exchange  (required for SELL orders + position crediting)
+ */
+export async function checkEoaApprovals(eoaAddress: string): Promise<EoaApprovalStatus> {
+  try {
+    const [usdtForCtfRes, usdtForExRes, ctfForExRes] = await Promise.all([
+      proxyRequest('eth_call', [
+        { to: USDT_ADDRESS, data: encodeAllowanceCall(eoaAddress, CTF_TOKEN_ADDRESS) }, 'latest',
+      ]),
+      proxyRequest('eth_call', [
+        { to: USDT_ADDRESS, data: encodeAllowanceCall(eoaAddress, CTF_EXCHANGE_ADDRESS) }, 'latest',
+      ]),
+      proxyRequest('eth_call', [
+        { to: CTF_TOKEN_ADDRESS, data: encodeIsApprovedForAllCall(eoaAddress, CTF_EXCHANGE_ADDRESS) }, 'latest',
+      ]),
+    ])
+    const needsUSDTForCTFToken = decodeUint256(usdtForCtfRes as string) < EOA_THRESHOLD
+    const needsUSDTForExchange = decodeUint256(usdtForExRes  as string) < EOA_THRESHOLD
+    const needsCTFForExchange  = !decodeBool(ctfForExRes as string)
+    return {
+      needsUSDTForCTFToken,
+      needsUSDTForExchange,
+      needsCTFForExchange,
+      allApproved: !needsUSDTForCTFToken && !needsUSDTForExchange && !needsCTFForExchange,
+    }
+  } catch {
+    return { needsUSDTForCTFToken: true, needsUSDTForExchange: true, needsCTFForExchange: true, allApproved: false }
+  }
+}
+
+/**
+ * Legacy single-value check — returns true if USDT→Exchange allowance is sufficient.
+ * @deprecated Use checkEoaApprovals for the full 3-approval check.
  */
 export async function checkEoaAllowanceForExchange(eoaAddress: string): Promise<bigint> {
   const data = encodeAllowanceCall(eoaAddress, CTF_EXCHANGE_ADDRESS)
@@ -264,42 +307,84 @@ export async function checkEoaAllowanceForExchange(eoaAddress: string): Promise<
   }
 }
 
-/**
- * Grant the CTF Exchange an unlimited USDT allowance directly from the EOA.
- * This sends one MetaMask transaction (no gas for approval itself on BSC).
- */
-export async function grantEoaApproval(
-  signer: WalletSigner,
+/** Send a transaction and poll for receipt. Throws on revert or timeout. */
+async function sendTxAndWait(
+  label: string,
+  eoaAddress: string,
+  to: string,
+  data: string,
   onProgress?: (msg: string) => void
 ): Promise<void> {
-  const eoaAddress = await signer.getAddress()
-  const data = encodeApproveData(CTF_EXCHANGE_ADDRESS)
-
-  onProgress?.('Approving USDT — confirm in MetaMask…')
+  onProgress?.(`${label} — confirm in MetaMask…`)
   const txHash = (await proxyRequest('eth_sendTransaction', [{
     from: eoaAddress,
-    to:   USDT_ADDRESS,
+    to,
     data,
-    gas:  '0x186A0', // 100,000 gas
+    gas: '0x186A0', // 100,000 gas
   }])) as string
 
   for (let i = 0; i < 40; i++) {
     await new Promise<void>((r) => setTimeout(r, 3000))
     const elapsed = (i + 1) * 3
-    onProgress?.(`Waiting for confirmation… ${elapsed}s`)
+    onProgress?.(`${label}: confirming… ${elapsed}s`)
     try {
       const receipt = (await proxyRequest('eth_getTransactionReceipt', [txHash])) as {
         status?: string
       } | null
       if (receipt?.status === '0x1') return
       if (receipt?.status === '0x0') {
-        throw new Error('Approval transaction reverted — bscscan.com/tx/' + txHash)
+        throw new Error(`${label} reverted — bscscan.com/tx/${txHash}`)
       }
     } catch (e: unknown) {
-      if (e instanceof Error && e.message.startsWith('Approval transaction reverted')) throw e
+      if (e instanceof Error && e.message.includes('reverted')) throw e
     }
   }
-  throw new Error(`Approval not confirmed after 2 minutes — bscscan.com/tx/${txHash}`)
+  throw new Error(`${label} not confirmed after 2 minutes — bscscan.com/tx/${txHash}`)
+}
+
+/**
+ * Grant all three EOA approvals required for trading (one MetaMask tx per missing approval):
+ *   1. USDT → CTF Token contract
+ *   2. USDT → CTF Exchange
+ *   3. CTF Tokens → CTF Exchange (setApprovalForAll)
+ * Skips any approval that is already in place.
+ */
+export async function grantEoaApproval(
+  signer: WalletSigner,
+  onProgress?: (msg: string) => void
+): Promise<void> {
+  const eoaAddress = await signer.getAddress()
+  const status = await checkEoaApprovals(eoaAddress)
+
+  if (status.allApproved) {
+    onProgress?.('All approvals already in place.')
+    return
+  }
+
+  if (status.needsUSDTForCTFToken) {
+    await sendTxAndWait(
+      'Approving USDT for CTF Token (1/3)',
+      eoaAddress, USDT_ADDRESS,
+      encodeApproveData(CTF_TOKEN_ADDRESS),
+      onProgress
+    )
+  }
+  if (status.needsUSDTForExchange) {
+    await sendTxAndWait(
+      `Approving USDT for Exchange (${status.needsUSDTForCTFToken ? '2' : '1'}/3)`,
+      eoaAddress, USDT_ADDRESS,
+      encodeApproveData(CTF_EXCHANGE_ADDRESS),
+      onProgress
+    )
+  }
+  if (status.needsCTFForExchange) {
+    await sendTxAndWait(
+      'Approving CTF Tokens for Exchange (3/3)',
+      eoaAddress, CTF_TOKEN_ADDRESS,
+      encodeSetApprovalForAllData(CTF_EXCHANGE_ADDRESS),
+      onProgress
+    )
+  }
 }
 
 /**

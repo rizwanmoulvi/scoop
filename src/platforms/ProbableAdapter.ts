@@ -678,7 +678,7 @@ export class ProbableAdapter implements PredictionPlatform {
     const path         = `/public/api/v1/order/${BSC_CHAIN_ID}`
 
     const requestBody = {
-      deferExec: false,
+      deferExec: true,
       order: {
         salt:          extra.salt ?? String(Math.round(Math.random() * Date.now())),
         maker:         makerAddress,   // EOA (signatureType=0) or proxy (signatureType=1)
@@ -732,6 +732,50 @@ export class ProbableAdapter implements PredictionPlatform {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Order submission failed'
       return { success: false, message, raw: err }
+    }
+  }
+
+  // ── Order status ─────────────────────────────────────────────────────────
+
+  /**
+   * Fetch the current status of a previously placed order.
+   * Returns null on any error (caller should treat as unknown status).
+   */
+  async getOrderStatus(
+    orderId: string,
+    tokenId: string,
+    creds: { key: string; secret: string; passphrase: string },
+    eoaAddress: string
+  ): Promise<{ status: string; executedQty: string; origQty: string; avgPrice?: string } | null> {
+    const path        = `/public/api/v1/orders/${BSC_CHAIN_ID}/${orderId}`
+    const queryString = `?tokenId=${encodeURIComponent(tokenId)}`
+    const timestamp   = Math.floor(Date.now() / 1000)
+    const l2Sig       = await this.buildL2Signature(
+      creds.secret, timestamp, 'GET', path + queryString, ''
+    )
+    try {
+      const data = await apiFetch<Record<string, unknown>>(
+        `${this.orderbookApiBase}/orders/${BSC_CHAIN_ID}/${orderId}${queryString}`,
+        {
+          method: 'GET',
+          headers: {
+            prob_address:      eoaAddress,
+            prob_signature:    l2Sig,
+            prob_timestamp:    timestamp.toString(),
+            prob_api_key:      creds.key,
+            prob_passphrase:   creds.passphrase,
+            prob_account_type: 'eoa',
+          },
+        }
+      )
+      return {
+        status:      String(data.status ?? 'UNKNOWN'),
+        executedQty: String(data.executedQty ?? '0'),
+        origQty:     String(data.origQty ?? '0'),
+        avgPrice:    data.avgPrice != null ? String(data.avgPrice) : undefined,
+      }
+    } catch {
+      return null
     }
   }
 }

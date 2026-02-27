@@ -4,7 +4,7 @@ import type { Outcome } from '../../types/market'
 import { getAdapter } from '../../platforms'
 import type { ProbableAdapter } from '../../platforms/ProbableAdapter'
 import { connectWallet, ProxySigner, proxyRequest } from '../../wallet/wallet'
-import { checkEoaUsdtBalance, checkEoaAllowanceForExchange, grantEoaApproval } from '../../wallet/approvals'
+import { checkEoaUsdtBalance, checkEoaApprovals, grantEoaApproval } from '../../wallet/approvals'
 
 function OutcomeButton({
   outcome,
@@ -130,23 +130,22 @@ export function OrderForm() {
         }
 
         if (sideNum === 0 && makerAmtWei > 0n) {
-          const [eoaBalance, eoaAllowance] = await Promise.all([
-            checkEoaUsdtBalance(wallet.address!),
-            checkEoaAllowanceForExchange(wallet.address!),
-          ])
+          const eoaBalance = await checkEoaUsdtBalance(wallet.address!)
 
           if (eoaBalance < makerAmtWei) {
             throw new Error(
               `Insufficient USDT. Need ${fmtUsdt(makerAmtWei)} USDT, have ${fmtUsdt(eoaBalance)} USDT.`
             )
           }
+        }
 
-          if (eoaAllowance < makerAmtWei) {
-            setOrder({ status: 'approving' })
-            const signer = new ProxySigner(wallet.address!)
-            await grantEoaApproval(signer, (msg) => setOrder({ status: 'approving', error: msg }))
-            setWallet({ eoaAllowanceOk: true })
-          }
+        // Check all 3 EOA approvals (USDT→CTFToken, USDT→Exchange, CTFTokens→Exchange)
+        const eoaApprovals = await checkEoaApprovals(wallet.address!)
+        if (!eoaApprovals.allApproved) {
+          setOrder({ status: 'approving' })
+          const signer = new ProxySigner(wallet.address!)
+          await grantEoaApproval(signer, (msg) => setOrder({ status: 'approving', error: msg }))
+          setWallet({ eoaAllowanceOk: true })
         }
       }
 
@@ -198,7 +197,42 @@ export function OrderForm() {
       }
 
       const response = await adapter.submitOrder(signedOrder, signer)
-      setOrder({ response, status: response.success ? 'success' : 'error', error: response.message })
+      if (!response.success) {
+        setOrder({ response, status: 'error', error: response.message })
+        return
+      }
+
+      // Order accepted — fetch status after a brief delay to report fill vs open.
+      setOrder({ response, status: 'success' })
+      if (
+        detectedMarket.platform === 'probable' &&
+        response.orderId &&
+        wallet.apiKey
+      ) {
+        const extra    = unsignedOrder.extra as Record<string, unknown>
+        const tokenId  = String(extra?.tokenId ?? '')
+        if (tokenId) {
+          setTimeout(async () => {
+            try {
+              const pa = adapter as import('../../platforms/ProbableAdapter').ProbableAdapter
+              const orderStatus = await pa.getOrderStatus(
+                response.orderId!, tokenId, wallet.apiKey!, wallet.address!
+              )
+              if (!orderStatus) return
+              let msg: string
+              if (orderStatus.status === 'FILLED') {
+                const price = orderStatus.avgPrice ? ` @ $${Number(orderStatus.avgPrice).toFixed(2)}` : ''
+                msg = `✓ Filled! ${orderStatus.executedQty} shares${price}`
+              } else if (orderStatus.status === 'PARTIALLY_FILLED') {
+                msg = `✓ Partially filled: ${orderStatus.executedQty}/${orderStatus.origQty} shares — order #${response.orderId} still open`
+              } else {
+                msg = `✓ Order #${response.orderId} open — waiting for match (${orderStatus.origQty} shares)`
+              }
+              setOrder({ response: { ...response, message: msg } })
+            } catch { /* status check is best-effort */ }
+          }, 2500)
+        }
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error'
       setOrder({ status: 'error', error: message })
@@ -288,7 +322,7 @@ export function OrderForm() {
         {order.status === 'idle'       && (paperTrading
           ? `📝 Paper ${selectedOutcome} · $${amount || '0'}`
           : `Confirm ${selectedOutcome} · $${amount || '0'}`)}
-        {order.status === 'success'    && (paperTrading ? '✓ Paper Trade Simulated!' : '✓ Order Placed!')}
+        {order.status === 'success'    && (paperTrading ? '✓ Paper Trade Simulated!' : (order.response?.message ?? '✓ Order Placed!'))}
         {order.status === 'error'      && 'Retry'}
       </button>
     </div>
