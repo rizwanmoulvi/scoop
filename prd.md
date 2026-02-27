@@ -505,3 +505,210 @@ This product:
 * Is production architecture ready
 
 
+--------------------------------------------------
+
+"1 USDT
+$1.00
+
+From
+
+maskicon
+scoop-2
+
+Wallet 1
+
+To
+
+0x23774...da383
+
+Estimated changes
+
+You send
+
+- 1
+
+
+USDT
+
+$1.00
+
+Network
+
+BNB Chain logo
+BNB Chain
+
+Request from
+
+x.com
+
+Interacting with
+
+
+USDT
+
+Network fee
+
+< $0.01
+
+BNB logo
+BNB
+
+
+Speed
+
+Market
+
+~1 sec"
+
+"Signature request
+Review request details before you confirm.
+
+Network
+
+BNB Chain logo
+BNB Chain
+
+Request from
+
+x.com
+
+
+
+Message
+
+Primary type:
+
+ClobAuth
+
+Address:
+
+maskicon
+scoop-2
+
+Wallet 1
+
+Timestamp:
+
+1772183804
+
+Nonce:
+
+0
+
+Message:
+
+This message attests that I control the given wallet"
+
+
+"Signature request
+Review request details before you confirm.
+
+Network
+
+BNB Chain logo
+BNB Chain
+
+Request from
+
+x.com
+
+Interacting with
+
+0xF99F5...97c86
+
+
+
+Message
+
+Primary type:
+
+Order
+
+Salt:
+
+1770618186995
+
+Maker:
+
+0x23774...da383
+
+Signer:
+
+maskicon
+scoop-2
+
+Wallet 1
+
+Taker:
+
+0x00000...00000
+
+TokenId:
+
+84862885472420082881595839912266645393318600108766608134661198571939703818046
+
+MakerAmount:
+
+999600000000000000
+
+TakerAmount:
+
+1190000000000000000
+
+Expiration:
+
+0
+
+Nonce:
+
+0
+
+FeeRateBps:
+
+175
+
+Side:
+
+0
+
+SignatureType:
+
+1"
+
+
+log "[Scoop] expected proxy address: 0x237742997B2A456acC98B25c69023b4D742da383
+proxyWallet.ts:304 [Scoop] eth_getCode via direct RPC: 0x6080604052600073ff
+proxyWallet.ts:306 [Scoop] eth_getCode via MetaMask: 0x6080604052600073ff
+WalletConnect.tsx:55 [Scoop] proxy wallet found: 0x237742997B2A456acC98B25c69023b4D742da383
+wallet.ts:104 [Scoop] eth_signTypedData_v4 payload: {"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"}],"ClobAuth":[{"name":"address","type":"address"},{"name":"timestamp","type":"string"},{"name":"nonce","type":"uint256"},{"name":"message","type":"string"}]},"primaryType":"ClobAuth","domain":{"name":"ClobAuthDomain","version":"1","chainId":56},"message":{"address":"0x48461f405be183dd95cf0025de1c3d9bb3541fd4","timestamp":"1772183804","nonce":0,"message":"This message attests that I control the given wallet"}}
+background.ts:104 [Scoop BG] API_FETCH POST https://api.probable.markets/public/api/v1/auth/api-key/56
+ProbableAdapter.ts:405 [Scoop] signOrder EIP-712 value: Object
+wallet.ts:104 [Scoop] eth_signTypedData_v4 payload: {"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"}],"Order":[{"name":"salt","type":"uint256"},{"name":"maker","type":"address"},{"name":"signer","type":"address"},{"name":"taker","type":"address"},{"name":"tokenId","type":"uint256"},{"name":"makerAmount","type":"uint256"},{"name":"takerAmount","type":"uint256"},{"name":"expiration","type":"uint256"},{"name":"nonce","type":"uint256"},{"name":"feeRateBps","type":"uint256"},{"name":"side","type":"uint8"},{"name":"signatureType","type":"uint8"}]},"primaryType":"Order","domain":{"name":"Probable CTF Exchange","version":"1","chainId":56,"verifyingContract":"0xF99F5367ce708c66F0860B77B4331301A5597c86"},"message":{"salt":"1770618186995","maker":"0x237742997B2A456acC98B25c69023b4D742da383","signer":"0x48461f405be183dd95cf0025de1c3d9bb3541fd4","taker":"0x0000000000000000000000000000000000000000","tokenId":"84862885472420082881595839912266645393318600108766608134661198571939703818046","makerAmount":"999600000000000000","takerAmount":"1190000000000000000","expiration":"0","nonce":"0","feeRateBps":"175","side":0,"signatureType":1}}
+ProbableAdapter.ts:576 [Scoop] submitOrder body: {
+  "deferExec": true,
+  "order": {
+    "salt": "1770618186995",
+    "maker": "0x237742997B2A456acC98B25c69023b4D742da383",
+    "signer": "0x48461f405be183dd95cf0025de1c3d9bb3541fd4",
+    "taker": "0x0000000000000000000000000000000000000000",
+    "tokenId": "84862885472420082881595839912266645393318600108766608134661198571939703818046",
+    "makerAmount": "999600000000000000",
+    "takerAmount": "1190000000000000000",
+    "side": "BUY",
+    "expiration": "0",
+    "nonce": "0",
+    "feeRateBps": "175",
+    "signatureType": 1,
+    "signature": "0xd18a169ac2c72ba44841b058bf1ffe2375a51635301f23743daaf60475960e435da6cbedc7d614334a6adb6769dc45603ca629c24de07db45eca33b12b8f81121c"
+  },
+  "owner": "0x237742997B2A456acC98B25c69023b4D742da383",
+  "orderType": "GTC"
+}
+background.ts:104 [Scoop BG] API_FETCH POST https://api.probable.markets/public/api/v1/order/56
+background.ts:111 [Scoop BG] API_FETCH 400 https://api.probable.markets/public/api/v1/order/56 Object
+(anonymous) @ background.ts:111"
+
+
+"✗
+Order failed
+HTTP 400: https://api.probable.markets/public/api/v1/order/56 — {"error":{"code":"PAS-4205","description":"The provided order is invalid.","message":"Order validation failed on chain"}}"

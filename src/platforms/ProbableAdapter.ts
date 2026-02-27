@@ -1,3 +1,4 @@
+import { ethers } from 'ethers'
 import type { Market, OrderBook } from '../types/market'
 import type { ApiResponse, Order, SignedOrder, TradeInput } from '../types/order'
 import type { PredictionPlatform, WalletSigner } from './PredictionPlatform'
@@ -374,6 +375,44 @@ export class ProbableAdapter implements PredictionPlatform {
     }
   }
 
+  /**
+   * Fetches the current minimum valid order nonce for a maker address from the
+   * CTF Exchange contract.  Any order with nonce < this value is rejected on-chain
+   * (PAS-4205).  Falls back to 0n if the call fails.
+   */
+  private async getMinNonce(makerAddress: string): Promise<bigint> {
+    const iface = new ethers.Interface([
+      'function getMinNonce(address maker) view returns (uint256)',
+    ])
+    const calldata = iface.encodeFunctionData('getMinNonce', [makerAddress])
+    const BSC_RPCS = [
+      'https://bsc-dataseed1.binance.org',
+      'https://bsc-dataseed2.binance.org',
+    ]
+    for (const rpc of BSC_RPCS) {
+      try {
+        const res = await fetch(rpc, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0', id: 1, method: 'eth_call',
+            params: [{ to: CTF_EXCHANGE_ADDRESS, data: calldata }, 'latest'],
+          }),
+        })
+        const json = await res.json() as { result?: string; error?: unknown }
+        if (json.result && json.result !== '0x') {
+          const [val] = iface.decodeFunctionResult('getMinNonce', json.result)
+          console.log('[Scoop] getMinNonce for', makerAddress, '=', (val as bigint).toString())
+          return val as bigint
+        }
+      } catch (e) {
+        console.warn('[Scoop] getMinNonce RPC failed:', e)
+      }
+    }
+    console.warn('[Scoop] getMinNonce: could not fetch, defaulting to 0')
+    return 0n
+  }
+
   async signOrder(order: Order, signer: WalletSigner): Promise<SignedOrder> {
     const extra = order.extra as {
       side: number; makerAmount: string; takerAmount: string
@@ -387,6 +426,11 @@ export class ProbableAdapter implements PredictionPlatform {
     // signer = EOA that actually signs the EIP-712 message
     const eoaAddress = await signer.getAddress()
 
+    // Fetch the contract's current minimum nonce for this maker.
+    // Using a stale or zero nonce when the contract has advanced it causes PAS-4205.
+    const contractMinNonce = await this.getMinNonce(order.makerAddress)
+    const nonce = contractMinNonce > BigInt(extra.nonce) ? contractMinNonce : BigInt(extra.nonce)
+
     const value = {
       salt:          BigInt(salt),
       maker:         order.makerAddress as `0x${string}`,
@@ -396,7 +440,7 @@ export class ProbableAdapter implements PredictionPlatform {
       makerAmount:   BigInt(extra.makerAmount),
       takerAmount:   BigInt(extra.takerAmount),
       expiration:    BigInt(order.expiration),
-      nonce:         BigInt(extra.nonce),
+      nonce,
       feeRateBps:    BigInt(extra.feeRateBps),
       side:          extra.side,
       signatureType: extra.signatureType,
@@ -405,13 +449,14 @@ export class ProbableAdapter implements PredictionPlatform {
     console.log('[Scoop] signOrder EIP-712 value:', {
       salt, maker: order.makerAddress, signer: eoaAddress,
       tokenId: extra.tokenId, makerAmount: extra.makerAmount, takerAmount: extra.takerAmount,
-      expiration: order.expiration, nonce: extra.nonce, feeRateBps: extra.feeRateBps,
+      expiration: order.expiration, nonce: nonce.toString(), feeRateBps: extra.feeRateBps,
       side: extra.side, signatureType: extra.signatureType,
     })
 
     const signature = await signer.signTypedData(this.domain, this.orderTypes, value)
 
-    return { ...order, signature, signedAt: Math.floor(Date.now() / 1000), extra: { ...extra, salt } }
+    // Persist the resolved nonce into extra so submitOrder sends the same value
+    return { ...order, signature, signedAt: Math.floor(Date.now() / 1000), extra: { ...extra, salt, nonce: nonce.toString() } }
   }
 
   // ── L1 Authentication ─────────────────────────────────────────────────────
