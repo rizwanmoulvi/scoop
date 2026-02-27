@@ -712,11 +712,12 @@ export class ProbableAdapter implements PredictionPlatform {
         {
           method: 'POST',
           headers: {
-            prob_address:    eoaAddress,
-            prob_signature:  l2Sig,
-            prob_timestamp:  timestamp.toString(),
-            prob_api_key:    extra.apiKey,
-            prob_passphrase: extra.apiPassphrase,
+            prob_address:      eoaAddress,
+            prob_signature:    l2Sig,
+            prob_timestamp:    timestamp.toString(),
+            prob_api_key:      extra.apiKey,
+            prob_passphrase:   extra.apiPassphrase,
+            prob_account_type: 'eoa',  // required for signatureType=0 EOA orders
           },
           body: bodyString,
         }
