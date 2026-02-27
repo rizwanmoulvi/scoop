@@ -386,10 +386,17 @@ export class ProbableAdapter implements PredictionPlatform {
       takerAmount:   BigInt(extra.takerAmount),
       expiration:    BigInt(order.expiration),
       nonce:         BigInt(extra.nonce),
-      feeRateBps:    BigInt(extra.feeRateBps),
+      feeRateBps:    0n,   // MUST be 0 when signing — contract hash uses 0; API fee rate is separate
       side:          extra.side,
       signatureType: extra.signatureType,
     }
+
+    console.log('[Scoop] signOrder EIP-712 value:', {
+      salt, maker: order.makerAddress, signer: eoaAddress,
+      tokenId: extra.tokenId, makerAmount: extra.makerAmount, takerAmount: extra.takerAmount,
+      expiration: order.expiration, nonce: extra.nonce, feeRateBps: 0,
+      side: extra.side, signatureType: extra.signatureType,
+    })
 
     const signature = await signer.signTypedData(this.domain, this.orderTypes, value)
 
@@ -547,13 +554,15 @@ export class ProbableAdapter implements PredictionPlatform {
         side:          extra.side === 0 ? 'BUY' : 'SELL',
         expiration:    String(order.expiration),
         nonce:         extra.nonce,
-        feeRateBps:    extra.feeRateBps,
+        feeRateBps:    '175', // API minimum; signed hash always uses 0 (see signOrder)
         signatureType: extra.signatureType,
         signature:     order.signature,
       },
       owner:     eoaAddress,     // MUST be EOA address — matches clob-examples reference
       orderType: 'GTC',
     }
+
+    console.log('[Scoop] submitOrder body:', JSON.stringify(requestBody, null, 2))
 
     const bodyString = JSON.stringify(requestBody)
     const timestamp  = Math.floor(Date.now() / 1000)
