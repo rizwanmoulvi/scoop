@@ -678,7 +678,7 @@ export class ProbableAdapter implements PredictionPlatform {
     const path         = `/public/api/v1/order/${BSC_CHAIN_ID}`
 
     const requestBody = {
-      deferExec: true,
+      deferExec: false,
       order: {
         salt:          extra.salt ?? String(Math.round(Math.random() * Date.now())),
         maker:         makerAddress,   // EOA (signatureType=0) or proxy (signatureType=1)

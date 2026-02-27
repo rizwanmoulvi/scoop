@@ -712,3 +712,47 @@ background.ts:111 [Scoop BG] API_FETCH 400 https://api.probable.markets/public/a
 "✗
 Order failed
 HTTP 400: https://api.probable.markets/public/api/v1/order/56 — {"error":{"code":"PAS-4205","description":"The provided order is invalid.","message":"Order validation failed on chain"}}"
+
+
+
+
+
+---------------------------
+enable trading "Signature request
+Review request details before you confirm.
+
+Network
+
+BNB Chain logo
+BNB Chain
+
+Request from
+
+probable.markets
+
+
+
+Message
+
+Primary type:
+
+ClobAuth
+
+Address:
+
+maskicon
+scoop-3
+
+Wallet 1
+
+Timestamp:
+
+1772191999
+
+Nonce:
+
+0
+
+Message:
+
+This message attests that I control the given wallet"
