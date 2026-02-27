@@ -368,7 +368,7 @@ export class ProbableAdapter implements PredictionPlatform {
         takerAmount:   takerAmount.toString(),
         feeRateBps:    '175', // min allowed; must match signed EIP-712 value
         nonce:         '0',
-        signatureType: 1,    // PROB_GNOSIS_SAFE — proxy wallet is maker, EOA is signer
+        signatureType: 0,    // EOA direct — signer == maker, no proxy validation chain
         taker:         '0x0000000000000000000000000000000000000000',
         tokenId:       '',   // injected by OrderForm from market.clobTokenIds
         // apiKey / apiSecret / apiPassphrase injected by OrderForm before submitOrder
@@ -496,22 +496,23 @@ export class ProbableAdapter implements PredictionPlatform {
 
     const salt = String(Math.round(Math.random() * Date.now()))
 
-    // maker = proxy wallet (passed as makerAddress from OrderForm)
-    // signer = EOA that actually signs the EIP-712 message
-    const eoaAddress = await signer.getAddress()
+    // For signatureType=0 (EOA direct): maker == signer == EOA.
+    // For signatureType=1 (PROB_GNOSIS_SAFE): maker = proxy, signer = EOA.
+    const eoaAddress  = await signer.getAddress()
+    const makerAddress = extra.signatureType === 0 ? eoaAddress : order.makerAddress
 
-    // Verify proxy has enough balance + allowance before prompting MetaMask.
+    // Verify the maker has enough USDT balance + allowance before prompting MetaMask.
     // This converts PAS-4205 into a human-readable error message.
-    await this.verifyOrderPreconditions(order.makerAddress, BigInt(extra.makerAmount))
+    await this.verifyOrderPreconditions(makerAddress, BigInt(extra.makerAmount))
 
     // Fetch the contract's current minimum nonce for this maker.
     // Using a stale or zero nonce when the contract has advanced it causes PAS-4205.
-    const contractMinNonce = await this.getMinNonce(order.makerAddress)
+    const contractMinNonce = await this.getMinNonce(makerAddress)
     const nonce = contractMinNonce > BigInt(extra.nonce) ? contractMinNonce : BigInt(extra.nonce)
 
     const value = {
       salt:          BigInt(salt),
-      maker:         order.makerAddress as `0x${string}`,
+      maker:         makerAddress as `0x${string}`,
       signer:        eoaAddress as `0x${string}`,
       taker:         extra.taker as `0x${string}`,
       tokenId:       BigInt(extra.tokenId || '0'),
@@ -525,7 +526,7 @@ export class ProbableAdapter implements PredictionPlatform {
     }
 
     console.log('[Scoop] signOrder EIP-712 value:', {
-      salt, maker: order.makerAddress, signer: eoaAddress,
+      salt, maker: makerAddress, signer: eoaAddress,
       tokenId: extra.tokenId, makerAmount: extra.makerAmount, takerAmount: extra.takerAmount,
       expiration: order.expiration, nonce: nonce.toString(), feeRateBps: extra.feeRateBps,
       side: extra.side, signatureType: extra.signatureType,
@@ -668,19 +669,20 @@ export class ProbableAdapter implements PredictionPlatform {
       }
     }
 
-    // EOA signs and authenticates; proxy wallet is the on-chain maker/owner.
-    // IMPORTANT: `owner` in the request body must be the EOA signer address,
-    // not the proxy. This matches the official clob-examples reference implementation.
+    // For signatureType=0: maker == signer == EOA (no proxy).
+    // For signatureType=1: maker = proxy, signer = EOA.
     const eoaAddress   = await _signer.getAddress()
-    const proxyAddress = extra.proxyAddress ?? order.makerAddress
+    const makerAddress = extra.signatureType === 0
+      ? eoaAddress
+      : (extra.proxyAddress ?? order.makerAddress)
     const path         = `/public/api/v1/order/${BSC_CHAIN_ID}`
 
     const requestBody = {
       deferExec: true,
       order: {
         salt:          extra.salt ?? String(Math.round(Math.random() * Date.now())),
-        maker:         proxyAddress,   // proxy wallet
-        signer:        eoaAddress,     // EOA
+        maker:         makerAddress,   // EOA (signatureType=0) or proxy (signatureType=1)
+        signer:        eoaAddress,     // EOA always
         taker:         extra.taker ?? '0x0000000000000000000000000000000000000000',
         tokenId:       extra.tokenId ?? '0',
         makerAmount:   extra.makerAmount,
@@ -692,7 +694,7 @@ export class ProbableAdapter implements PredictionPlatform {
         signatureType: extra.signatureType,
         signature:     order.signature,
       },
-      owner:     proxyAddress,   // proxy wallet address (signedOrder.maker)
+      owner:     eoaAddress,   // always the EOA (API account owner)
       orderType: 'GTC',
     }
 
