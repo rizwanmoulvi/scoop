@@ -76,4 +76,25 @@ const res = await fetch(`${BASE_URL}${path}${query}`, {
 })
 const body = await res.json()
 console.log(`HTTP ${res.status}`)
-console.log(JSON.stringify(body, null, 2))
+
+// Pretty-print with volume in millions and correct token label
+if (res.ok && body) {
+  const fmt = { ...body }
+
+  // Convert any volume / size fields from raw to M USDT
+  const volumeFields = ['volume', 'volumeNum', 'total', 'totalVolume', 'makerAmount', 'takerAmount']
+  for (const field of volumeFields) {
+    if (fmt[field] !== undefined && fmt[field] !== null) {
+      const raw = parseFloat(fmt[field])
+      if (!isNaN(raw) && raw > 1000) {
+        fmt[field + '_fmt'] = `${(raw / 1_000_000).toFixed(2)}M USDT`
+      }
+    }
+  }
+
+  // Replace any stray "USDC" strings in the raw body text
+  const cleaned = JSON.stringify(fmt, null, 2).replace(/"USDC"/g, '"USDT"')
+  console.log(cleaned)
+} else {
+  console.log(JSON.stringify(body, null, 2))
+}
