@@ -425,6 +425,60 @@
     }
     .download-card .btn-dl-outline:hover { background: var(--gray-50); border-color: var(--black); }
 
+    /* ── ROADMAP ──────────────────────────────────────────────────────────── */
+    .roadmap-section { background: var(--black); }
+    .roadmap-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1px;
+      margin-top: 3rem;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    .roadmap-card {
+      padding: 2rem;
+      border-right: 1px solid rgba(255,255,255,0.08);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      position: relative;
+      transition: background 0.2s;
+    }
+    .roadmap-card:hover { background: rgba(255,255,255,0.03); }
+    .roadmap-pill {
+      display: inline-block;
+      font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.08em;
+      text-transform: uppercase; padding: 0.2rem 0.6rem;
+      border-radius: 100px; margin-bottom: 1rem;
+    }
+    .pill-soon   { background: rgba(255,255,255,0.12); color: var(--white); }
+    .pill-next   { background: rgba(255,255,255,0.07); color: var(--gray-300); }
+    .pill-future { background: rgba(255,255,255,0.04); color: var(--gray-500); }
+    .roadmap-card-icon { font-size: 1.75rem; margin-bottom: 0.875rem; }
+    .roadmap-card h3 {
+      font-size: 1rem; font-weight: 700; letter-spacing: -0.02em;
+      margin-bottom: 0.5rem; color: var(--white);
+    }
+    .roadmap-card p { font-size: 0.8125rem; color: var(--gray-400); line-height: 1.65; }
+    .roadmap-card ul {
+      list-style: none;
+      margin-top: 0.75rem; display: flex; flex-direction: column; gap: 0.35rem;
+    }
+    .roadmap-card ul li {
+      font-size: 0.8125rem; color: var(--gray-400);
+      display: flex; align-items: flex-start; gap: 0.5rem; line-height: 1.5;
+    }
+    .roadmap-card ul li::before { content: '—'; color: var(--gray-600); flex-shrink: 0; }
+    .platform-row {
+      display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.875rem;
+    }
+    .platform-tag {
+      display: inline-flex; align-items: center; gap: 0.375rem;
+      font-size: 0.75rem; font-weight: 500;
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 0.25rem 0.625rem; border-radius: 6px;
+      color: var(--gray-300);
+    }
+
     /* ── FOOTER ──────────────────────────────────────────────────────────── */
     footer {
       border-top: 1px solid rgba(255,255,255,0.08);
@@ -462,6 +516,7 @@
     <a href="#how-it-works">How it works</a>
     <a href="#features">Features</a>
     <a href="#tech">Tech</a>
+    <a href="#roadmap">Roadmap</a>
     <a href="#download" class="nav-cta">Download</a>
   </div>
 </nav>
@@ -777,6 +832,84 @@
     <p style="margin-top:2rem;font-size:0.8125rem;color:var(--gray-400)">
       Requires MetaMask configured for <strong>BNB Smart Chain Mainnet</strong> (chainId 56) and some USDT (BEP-20) for collateral.
     </p>
+  </div>
+</section>
+
+<!-- ── ROADMAP ─────────────────────────────────────────────────────────────────── -->
+<section class="roadmap-section" id="roadmap">
+  <div class="section-inner">
+    <div class="reveal">
+      <p class="section-eyebrow">Roadmap</p>
+      <h2 class="section-title">What's coming next.</h2>
+      <p class="section-sub" style="color:var(--gray-400)">Scoop is extensible by design. Here's where it goes from here.</p>
+    </div>
+
+    <div class="roadmap-grid reveal">
+
+      <!-- ① Comment-to-Bet bot -->
+      <div class="roadmap-card">
+        <span class="roadmap-pill pill-soon">Coming soon</span>
+        <div class="roadmap-card-icon">💬</div>
+        <h3>Comment-to-Bet Bot</h3>
+        <p>Reply to any prediction market post on X with a bet command — no extension needed. Tag the bot and specify your position.</p>
+        <ul>
+          <li>Mention <code style="background:rgba(255,255,255,0.08);color:var(--white);font-family:var(--mono);font-size:0.75rem;padding:0.1rem 0.35rem;border-radius:4px">@scoop_bet YES $25</code> in any reply</li>
+          <li>Bot reads the parent tweet for a Probable market link</li>
+          <li>Signs and submits the CLOB order on your behalf</li>
+          <li>Replies with confirmation + fill status</li>
+        </ul>
+      </div>
+
+      <!-- ② Multi-market popup -->
+      <div class="roadmap-card">
+        <span class="roadmap-pill pill-soon">Coming soon</span>
+        <div class="roadmap-card-icon">📋</div>
+        <h3>Multi-Market Panel</h3>
+        <p>Tweets often reference multiple markets at once. The next version of the popup bundles them all into a single scrollable panel.</p>
+        <ul>
+          <li>Detect multiple Probable links in one post</li>
+          <li>Tab or card-per-market layout in the popup</li>
+          <li>Batch order submission across markets</li>
+          <li>Aggregate P&amp;L view for the thread</li>
+        </ul>
+      </div>
+
+      <!-- ③ Multi-platform -->
+      <div class="roadmap-card">
+        <span class="roadmap-pill pill-next">Next up</span>
+        <div class="roadmap-card-icon">🌐</div>
+        <h3>Multi-Platform Support</h3>
+        <p>Prediction markets get discussed everywhere. Scoop's content-script architecture makes new platforms a matter of adding a detector.</p>
+        <div class="platform-row">
+          <span class="platform-tag">𝕏 &nbsp;X (live)</span>
+          <span class="platform-tag">in &nbsp;LinkedIn</span>
+          <span class="platform-tag">&#9654; YouTube</span>
+          <span class="platform-tag">&#128247; Instagram</span>
+          <span class="platform-tag">&#127908; Farcaster</span>
+        </div>
+        <ul style="margin-top:0.875rem">
+          <li>Platform-specific link pattern matching</li>
+          <li>Injected Bet button adapts to each site's DOM</li>
+          <li>Same MetaMask session — no re-auth per platform</li>
+        </ul>
+      </div>
+
+      <!-- ④ Further future -->
+      <div class="roadmap-card">
+        <span class="roadmap-pill pill-future">Future</span>
+        <div class="roadmap-card-icon">🔭</div>
+        <h3>Further Out</h3>
+        <p>Longer-horizon features once the core is battle-tested.</p>
+        <ul>
+          <li>Limit orders &amp; advanced order types</li>
+          <li>Portfolio dashboard with realized/unrealized PnL</li>
+          <li>Push notifications on order fill or market resolution</li>
+          <li>Multi-chain support (Polygon, Base, Arbitrum)</li>
+          <li>Mobile companion app (iOS / Android)</li>
+        </ul>
+      </div>
+
+    </div>
   </div>
 </section>
 
