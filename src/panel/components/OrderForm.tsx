@@ -196,6 +196,29 @@ export function OrderForm() {
         return
       }
 
+      // ── DEBUG: log everything needed to call the API manually ──────────────
+      if (detectedMarket.platform === 'probable' && wallet.apiKey) {
+        const _extra = unsignedOrder.extra as Record<string, unknown>
+        console.group('[Scoop 🔍 Order Debug]')
+        console.log('EOA address  :', wallet.address)
+        console.log('tokenId      :', _extra?.tokenId ?? '⚠️ not set')
+        console.log('prob_api_key :', wallet.apiKey.key)
+        console.log('prob_passphrase:', wallet.apiKey.passphrase)
+        console.log('prob_secret  :', wallet.apiKey.secret, '(for HMAC — keep private)')
+        console.log('Signed order :', JSON.parse(JSON.stringify(signedOrder)))
+        console.log(
+          'curl (template):',
+          `curl "https://api.probable.markets/public/api/v1/orders/56/<ORDER_ID>?tokenId=${_extra?.tokenId ?? 'TOKEN_ID'}" \\` +
+          `\n  -H "prob_address: ${wallet.address}" \\` +
+          `\n  -H "prob_api_key: ${wallet.apiKey.key}" \\` +
+          `\n  -H "prob_passphrase: ${wallet.apiKey.passphrase}" \\` +
+          `\n  -H "prob_timestamp: <UNIX_TS>" \\` +
+          `\n  -H "prob_signature: <HMAC_SIG>"`
+        )
+        console.groupEnd()
+      }
+      // ────────────────────────────────────────────────────────────────────────
+
       const response = await adapter.submitOrder(signedOrder, signer)
       if (!response.success) {
         setOrder({ response, status: 'error', error: response.message })
@@ -204,6 +227,11 @@ export function OrderForm() {
 
       // Order accepted — fetch status after a brief delay to report fill vs open.
       setOrder({ response, status: 'success' })
+      const _extra2 = unsignedOrder.extra as Record<string, unknown>
+      console.log(
+        `[Scoop ✅ Order accepted] orderId=${response.orderId}  tokenId=${_extra2?.tokenId ?? '?'}` +
+        `\n  → To query manually: GET /public/api/v1/orders/56/${response.orderId}?tokenId=${_extra2?.tokenId ?? 'TOKEN_ID'}`
+      )
       if (
         detectedMarket.platform === 'probable' &&
         response.orderId &&

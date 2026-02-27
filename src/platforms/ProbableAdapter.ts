@@ -425,8 +425,8 @@ export class ProbableAdapter implements PredictionPlatform {
     } catch (e) {
       console.warn('[Scoop] getMinNonce MetaMask fallback failed:', e)
     }
-    console.warn('[Scoop] getMinNonce: all RPCs failed, defaulting to 0')
-    return 0n
+    console.warn('[Scoop] getMinNonce: all RPCs failed, using timestamp nonce')
+    return BigInt(Date.now())
   }
 
   /**
@@ -506,9 +506,11 @@ export class ProbableAdapter implements PredictionPlatform {
     await this.verifyOrderPreconditions(makerAddress, BigInt(extra.makerAmount))
 
     // Fetch the contract's current minimum nonce for this maker.
-    // Using a stale or zero nonce when the contract has advanced it causes PAS-4205.
+    // Falls back to Date.now() (ms timestamp) if all RPCs fail — this guarantees
+    // every order has a unique nonce even without a contract read.
     const contractMinNonce = await this.getMinNonce(makerAddress)
-    const nonce = contractMinNonce > BigInt(extra.nonce) ? contractMinNonce : BigInt(extra.nonce)
+    const timestampNonce   = BigInt(Date.now())
+    const nonce = contractMinNonce > timestampNonce ? contractMinNonce : timestampNonce
 
     const value = {
       salt:          BigInt(salt),
