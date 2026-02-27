@@ -75,30 +75,29 @@ export function Panel({ market, onClose }: PanelProps) {
   return (
     <div
       id="scoop-panel-inner"
-      className="flex flex-col h-full bg-white text-ink"
-      style={{ fontFamily: 'Nunito, Fredoka One, -apple-system, BlinkMacSystemFont, sans-serif' }}
+      className="flex flex-col h-full bg-white text-black"
+      style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif' }}
     >
       {/* Header */}
-      <header className="flex items-center gap-2 px-4 py-3 bg-brand-600 border-b-4 border-brand-700 shrink-0">
-        <span className="text-xl"></span>
-        <h1 className="text-base font-extrabold text-white tracking-tight">Scoop</h1>
-        <span className="ml-2 text-xs font-bold text-blue-200 bg-brand-700 px-2 py-0.5 rounded-full">beta</span>
+      <header className="flex items-center gap-2 px-4 py-3 bg-white border-b border-gray-200 shrink-0">
+        <h1 className="text-sm font-semibold text-black tracking-tight">Scoop</h1>
+        <span className="text-xs text-gray-400 font-normal">beta</span>
         {/* Paper trading toggle */}
         <button
           onClick={() => setPaperTrading(!paperTrading)}
           title={paperTrading ? 'Disable paper trading' : 'Enable paper trading (no real money)'}
-          className={`ml-auto flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-extrabold border-2 transition-all ${
+          className={`ml-auto flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
             paperTrading
-              ? 'bg-amber-400 border-amber-500 text-amber-900'
-              : 'bg-white/10 border-white/20 text-white/70 hover:bg-white/20'
+              ? 'bg-black border-black text-white'
+              : 'bg-white border-gray-300 text-gray-500 hover:border-gray-500'
           }`}
         >
-          📝 {paperTrading ? 'PAPER' : 'Paper'}
+          {paperTrading ? 'Paper on' : 'Paper'}
         </button>
         <button
           onClick={onClose}
           aria-label="Close panel"
-          className="w-7 h-7 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 text-white font-bold text-sm transition-colors"
+          className="w-6 h-6 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 hover:text-black text-xs transition-colors"
         >
           ✕
         </button>
@@ -106,14 +105,13 @@ export function Panel({ market, onClose }: PanelProps) {
 
       {/* Paper trading banner */}
       {paperTrading && (
-        <div className="flex items-center gap-2 px-4 py-2 bg-amber-400 border-b-2 border-amber-500 shrink-0">
-          <span className="text-sm">📝</span>
-          <span className="text-xs font-extrabold text-amber-900">PAPER TRADING ON — orders are signed but never submitted</span>
+        <div className="px-4 py-2 bg-gray-100 border-b border-gray-200 shrink-0">
+          <span className="text-xs text-gray-600">Paper trading — orders are signed but never submitted</span>
         </div>
       )}
 
       {/* Content */}
-      <main className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scrollbar-thin bg-[#f0f4ff]">
+      <main className="flex-1 overflow-y-auto px-4 py-4 space-y-5 scrollbar-thin bg-gray-50">
         {/* Market info */}
         <section>
           <MarketView />
@@ -121,14 +119,14 @@ export function Panel({ market, onClose }: PanelProps) {
 
         {/* Wallet */}
         <section>
-          <p className="text-xs font-extrabold text-ink-muted uppercase tracking-widest mb-2">Wallet</p>
+          <p className="text-xs font-medium text-gray-400 uppercase tracking-widest mb-2">Wallet</p>
           <WalletConnect />
         </section>
 
         {/* Order form — only when wallet connected */}
         {showOrderForm && (
           <section>
-            <p className="text-xs font-extrabold text-ink-muted uppercase tracking-widest mb-3">Place Order</p>
+            <p className="text-xs font-medium text-gray-400 uppercase tracking-widest mb-2">Place Order</p>
             <OrderForm />
           </section>
         )}

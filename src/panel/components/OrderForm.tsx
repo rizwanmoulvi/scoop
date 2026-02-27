@@ -17,25 +17,20 @@ function OutcomeButton({
   price?: number
   onClick: () => void
 }) {
-  const isYes = outcome === 'YES'
   const pct = price !== undefined ? Math.round(price * 100) : null
 
   return (
     <button
       onClick={onClick}
-      className={`flex-1 py-3 px-4 rounded-2xl font-extrabold text-sm transition-all border-2 shadow-btn active:translate-y-0.5 ${
-        isYes
-          ? isSelected
-            ? 'bg-yes border-yes text-white shadow-[3px_3px_0px_0px_rgba(0,60,160,0.30)]'
-            : 'bg-blue-50 border-yes/50 text-yes hover:bg-blue-100'
-          : isSelected
-          ? 'bg-no border-no text-white shadow-[3px_3px_0px_0px_rgba(180,60,0,0.30)]'
-          : 'bg-orange-50 border-no/50 text-no hover:bg-orange-100'
+      className={`flex-1 py-2.5 px-4 rounded-lg font-medium text-sm transition-all border active:translate-y-px ${
+        isSelected
+          ? 'bg-black border-black text-white'
+          : 'bg-white border-gray-300 text-black hover:border-gray-500 hover:bg-gray-50'
       }`}
     >
       {outcome}
       {pct !== null && (
-        <span className="ml-1.5 text-base font-black">{pct}¢</span>
+        <span className="ml-1.5 font-semibold tabular-nums">{pct}¢</span>
       )}
     </button>
   )
@@ -271,8 +266,8 @@ export function OrderForm() {
     <div className="space-y-4">
       {/* Outcome selector */}
       <div>
-        <label className="text-xs font-extrabold text-ink-muted uppercase tracking-widest mb-2 block">
-          Your prediction
+        <label className="text-xs font-medium text-gray-400 uppercase tracking-widest mb-2 block">
+          Prediction
         </label>
         <div className="flex gap-2">
           <OutcomeButton
@@ -292,8 +287,8 @@ export function OrderForm() {
 
       {/* Amount */}
       <div>
-        <label className="text-xs font-extrabold text-ink-muted uppercase tracking-widest mb-2 block">
-          Amount (USDC)
+        <label className="text-xs font-medium text-gray-400 uppercase tracking-widest mb-2 block">
+          Amount
         </label>
         <div className="relative">
           <input
@@ -303,9 +298,9 @@ export function OrderForm() {
             placeholder="0.00"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            className="w-full bg-white border-2 border-brand-200 rounded-2xl py-2.5 px-3 text-ink placeholder-ink-muted/50 focus:outline-none focus:border-brand-500 text-sm font-bold shadow-inner"
+            className="w-full bg-white border border-gray-300 rounded-lg py-2.5 px-3 text-black placeholder-gray-300 focus:outline-none focus:border-black text-sm"
           />
-          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-extrabold text-brand-400">
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">
             USDC
           </span>
         </div>
@@ -316,7 +311,7 @@ export function OrderForm() {
             <button
               key={v}
               onClick={() => setAmount(String(v))}
-              className="text-xs px-3 py-1.5 rounded-xl font-extrabold bg-brand-50 hover:bg-brand-100 text-brand-600 border-2 border-brand-200 transition-colors shadow-btn"
+              className="text-xs px-3 py-1.5 rounded-md font-medium bg-white hover:bg-gray-50 text-gray-600 border border-gray-200 hover:border-gray-400 transition-colors"
             >
               ${v}
             </button>
@@ -326,9 +321,9 @@ export function OrderForm() {
 
       {/* Order summary */}
       {estimatedShares && (
-        <div className="text-xs font-bold flex justify-between bg-brand-50 border-2 border-brand-100 rounded-2xl px-3 py-2.5">
-          <span className="text-ink-muted">Est. shares</span>
-          <span className="text-ink font-extrabold">{estimatedShares}</span>
+        <div className="text-xs flex justify-between bg-white border border-gray-100 rounded-lg px-3 py-2">
+          <span className="text-gray-400">Est. shares</span>
+          <span className="text-black font-medium tabular-nums">{estimatedShares}</span>
         </div>
       )}
 
@@ -336,21 +331,21 @@ export function OrderForm() {
       <button
         onClick={handleSubmit}
         disabled={!canSubmit}
-        className={`w-full py-3 rounded-2xl font-extrabold text-sm border-2 shadow-btn-orange transition-all active:translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed ${
+        className={`w-full py-2.5 rounded-lg font-medium text-sm border transition-all active:translate-y-px disabled:opacity-40 disabled:cursor-not-allowed ${
           paperTrading
-            ? 'bg-amber-400 hover:bg-amber-500 border-amber-500 text-amber-900'
-            : 'bg-orange-500 hover:bg-orange-600 border-orange-600 text-white'
+            ? 'bg-white border-black text-black hover:bg-gray-50'
+            : 'bg-black border-black text-white hover:bg-gray-900'
         }`}
       >
-        {order.status === 'building'   && 'Building order…'}
-        {order.status === 'approving'  && 'Approving USDT…'}
-        {order.status === 'depositing' && 'Depositing USDT…'}
-        {order.status === 'signing'    && 'Sign in MetaMask…'}
-        {order.status === 'submitting' && (paperTrading ? 'Simulating…' : 'Submitting…')}
+        {order.status === 'building'   && 'Building order'}
+        {order.status === 'approving'  && 'Setting up approvals'}
+        {order.status === 'depositing' && 'Depositing'}
+        {order.status === 'signing'    && 'Sign in MetaMask'}
+        {order.status === 'submitting' && (paperTrading ? 'Simulating' : 'Submitting')}
         {order.status === 'idle'       && (paperTrading
-          ? `📝 Paper ${selectedOutcome} · $${amount || '0'}`
-          : `Confirm ${selectedOutcome} · $${amount || '0'}`)}
-        {order.status === 'success'    && (paperTrading ? '✓ Paper Trade Simulated!' : (order.response?.message ?? '✓ Order Placed!'))}
+          ? `Paper — ${selectedOutcome} $${amount || '0'}`
+          : `${selectedOutcome} $${amount || '0'}`)}
+        {order.status === 'success'    && (paperTrading ? 'Paper trade simulated' : (order.response?.message ?? 'Order placed'))}
         {order.status === 'error'      && 'Retry'}
       </button>
     </div>

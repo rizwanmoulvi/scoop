@@ -167,22 +167,22 @@ export function WalletConnect() {
         <button
           onClick={handleConnect}
           disabled={wallet.isConnecting}
-          className="w-full py-3 px-4 rounded-2xl font-extrabold text-sm bg-orange-500 hover:bg-orange-600 active:translate-y-0.5 text-white border-2 border-orange-600 shadow-btn-orange transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+          className="w-full py-2.5 px-4 rounded-lg font-medium text-sm bg-black hover:bg-gray-900 active:translate-y-px text-white border border-black transition-all disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {wallet.isConnecting ? (
             <span className="flex items-center justify-center gap-2">
-              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+              <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
               </svg>
-              Connecting…
+              Connecting
             </span>
           ) : (
-            '🦊 Connect MetaMask'
+            'Connect MetaMask'
           )}
         </button>
         {wallet.error && (
-          <p className="text-xs text-red-500 font-bold text-center px-2">{wallet.error}</p>
+          <p className="text-xs text-black px-1">{wallet.error}</p>
         )}
       </div>
     )
@@ -194,101 +194,98 @@ export function WalletConnect() {
   return (
     <div className="space-y-2">
       {/* Address + chain */}
-      <div className="flex items-center gap-2 px-3 py-2.5 bg-green-50 border-2 border-green-400 rounded-2xl shadow-card">
-        <span className="w-3 h-3 rounded-full bg-green-500 shrink-0 border-2 border-green-300" />
-        <span className="text-green-700 font-extrabold text-sm">{shortenAddress(wallet.address)}</span>
+      <div className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg">
+        <span className="w-2 h-2 rounded-full bg-black shrink-0" />
+        <span className="text-black font-mono text-xs">{shortenAddress(wallet.address)}</span>
         {wallet.chainId && (
-          <span className="ml-auto text-xs font-bold text-green-500 bg-green-100 px-2 py-0.5 rounded-full">
-            {onBSC ? 'BSC ✓' : `Chain ${wallet.chainId}`}
+          <span className="ml-auto text-xs text-gray-400 tabular-nums">
+            {onBSC ? 'BSC' : `Chain ${wallet.chainId}`}
           </span>
         )}
       </div>
 
       {/* Wrong network */}
       {isProbable && !onBSC && (
-        <div className="px-3 py-2 bg-red-50 border-2 border-red-400 rounded-2xl text-xs font-bold text-red-600">
-          ⚠️ Switch to BSC (Chain 56) to trade on Probable
+        <div className="px-3 py-2 bg-white border border-black rounded-lg text-xs text-black">
+          Switch to BSC (Chain 56) to trade on Probable
         </div>
       )}
 
-      {/* Checking EOA allowance */}
+      {/* Checking approvals */}
       {isProbable && onBSC && wallet.isCheckingApprovals && !paperTrading && (
-        <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border-2 border-brand-200 rounded-2xl text-xs font-bold text-brand-600">
-          <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
+        <div className="flex items-center gap-2 px-1 text-xs text-gray-500">
+          <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
           </svg>
-          Checking USDT approval…
+          Checking approvals
         </div>
       )}
 
-      {/* EOA approval needed */}
+      {/* Approval needed */}
       {isProbable && onBSC && !wallet.isCheckingApprovals && wallet.eoaAllowanceOk === false && !wallet.isApprovingEoa && !paperTrading && (
         <div className="space-y-1.5">
-          <div className="px-3 py-2 bg-yellow-50 border-2 border-yellow-400 rounded-2xl text-xs font-bold text-yellow-700">
-            ⚠️ One-time setup: approve 3 contracts to enable EOA trading.
-          </div>
+          <p className="text-xs text-gray-500 px-1">One-time setup: approve 3 contracts to enable trading.</p>
           <button
             onClick={handleEoaApprove}
-            className="w-full py-2.5 px-4 rounded-2xl font-extrabold text-sm bg-brand-600 hover:bg-brand-700 active:translate-y-0.5 text-white border-2 border-brand-700 shadow-btn transition-all"
+            className="w-full py-2 px-4 rounded-lg font-medium text-sm bg-black hover:bg-gray-900 active:translate-y-px text-white border border-black transition-all"
           >
-            ✅ Set up approvals (one-time, up to 3 txs)
+            Set up approvals (1–3 transactions)
           </button>
         </div>
       )}
 
       {/* Approving in progress */}
       {isProbable && onBSC && wallet.isApprovingEoa && !paperTrading && (
-        <div className="flex items-center gap-2 px-3 py-2.5 bg-blue-50 border-2 border-brand-300 rounded-2xl text-xs font-bold text-brand-700">
-          <svg className="animate-spin h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none">
+        <div className="flex items-center gap-2 px-1 text-xs text-gray-600">
+          <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
           </svg>
-          <span className="leading-snug">{wallet.eoaApprovalStep || 'Approving…'}</span>
+          <span>{wallet.eoaApprovalStep || 'Approving'}</span>
         </div>
       )}
 
-      {/* EOA approved / ready to trade */}
+      {/* Approved / ready to trade */}
       {isProbable && onBSC && (wallet.eoaAllowanceOk === true || paperTrading) && !wallet.isApprovingEoa && (
-        <div className="px-3 py-2 bg-green-50 border-2 border-green-300 rounded-2xl text-xs font-bold text-green-700">
-          {paperTrading
-            ? '📝 Paper mode — approvals not needed'
-            : '✅ Approved — ready to trade'}
-        </div>
+        <p className="text-xs text-gray-500 px-1">
+          {paperTrading ? 'Paper mode — approvals not needed' : 'Approved — ready to trade'}
+        </p>
       )}
 
-      {/* USDT stuck in proxy wallet — withdraw to EOA */}
+      {/* USDT stuck in proxy wallet */}
       {isProbable && onBSC && wallet.proxyAddress && wallet.proxyUsdtBalance && !wallet.isWithdrawingFromProxy && !paperTrading && (
         <div className="space-y-1.5">
-          <div className="flex items-center justify-between px-3 py-1.5 bg-amber-50 border border-amber-300 rounded-2xl text-xs text-amber-700">
+          <div className="flex items-center justify-between px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs text-gray-600">
             <span>USDT in proxy wallet</span>
-            <span className="font-bold">{wallet.proxyUsdtBalance} USDT
-              <button onClick={refreshProxyUsdtBalance} className="ml-1.5 underline font-normal opacity-60 hover:opacity-100">↺</button>
+            <span className="font-mono text-black">
+              {wallet.proxyUsdtBalance}
+              <button onClick={refreshProxyUsdtBalance} className="ml-2 text-gray-400 hover:text-black">↺</button>
             </span>
           </div>
           <button
             onClick={handleWithdrawFromProxy}
-            className="w-full py-1.5 px-4 rounded-2xl font-bold text-xs bg-amber-500 hover:bg-amber-600 active:translate-y-0.5 text-white border-2 border-amber-600 transition-all"
+            className="w-full py-2 px-4 rounded-lg font-medium text-xs bg-white hover:bg-gray-50 text-black border border-gray-300 hover:border-gray-500 transition-all"
           >
-            ↩ Withdraw USDT from proxy to wallet
+            Withdraw USDT from proxy wallet
           </button>
         </div>
       )}
 
       {/* Withdrawing in progress */}
       {isProbable && onBSC && wallet.isWithdrawingFromProxy && !paperTrading && (
-        <div className="flex items-center gap-2 px-3 py-2.5 bg-blue-50 border-2 border-brand-300 rounded-2xl text-xs font-bold text-brand-700">
-          <svg className="animate-spin h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none">
+        <div className="flex items-center gap-2 px-1 text-xs text-gray-600">
+          <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
           </svg>
-          <span className="leading-snug">{wallet.withdrawStep || 'Withdrawing…'}</span>
+          <span>{wallet.withdrawStep || 'Withdrawing'}</span>
         </div>
       )}
 
       {/* Error */}
       {wallet.error && (
-        <p className="text-xs text-red-500 font-bold text-center px-2">{wallet.error}</p>
+        <p className="text-xs text-black px-1">{wallet.error}</p>
       )}
     </div>
   )
