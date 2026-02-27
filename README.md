@@ -353,14 +353,44 @@ Scoop brings prediction market trading surface directly into the most-used socia
 
 ### Roadmap
 
-| Milestone | Timeline |
+#### ✅ Shipped
+
+| Milestone | Status |
 |---|---|
 | **v0.1** — Probable BUY/SELL live on BSC Mainnet | ✅ Done |
-| **v0.2** — Open orders list + cancel from panel | Q2 2026 |
-| **v0.3** — Predict.fun full integration | Q2 2026 |
-| **v0.4** — Portfolio view (all held positions across markets) | Q3 2026 |
-| **v0.5** — Price alerts + auto-tweet on position changes | Q3 2026 |
-| **v1.0** — opBNB L2 support + Greenfield trade history storage | Q4 2026 |
+| Inline Bet button injected into X feed | ✅ Done |
+| On-chain CTF share balance display | ✅ Done |
+| EIP-712 CLOB order signing via MetaMask | ✅ Done |
+
+#### 🔜 Coming Soon
+
+| Milestone | Timeline |
+|---|---|
+| **Comment-to-Bet Bot** — Reply `@scoop_bet YES $25` to any prediction market tweet; bot signs and submits the order, replies with fill confirmation | Q2 2026 |
+| **Multi-Market Panel** — Detect multiple Probable links in one post, show a tabbed/card panel, support batch order submission and per-thread P&L | Q2 2026 |
+| Open orders list + cancel from panel | Q2 2026 |
+
+#### 🌐 Next Up — Multi-Platform Support
+
+Scoop's content-script architecture makes each new platform a detector plugin. Planned targets:
+
+| Platform | Notes |
+|---|---|
+| **X / Twitter** | ✅ Live |
+| **LinkedIn** | Prediction market links in professional posts |
+| **YouTube** | Bet buttons on video descriptions and comments |
+| **Instagram** | Link-in-bio and story link detection |
+| **Farcaster** | Native Web3 social — first-class integration |
+
+#### 🔭 Further Out
+
+| Milestone | Timeline |
+|---|---|
+| **v0.4** — Portfolio dashboard with realized / unrealized PnL | Q3 2026 |
+| **v0.5** — Push notifications on order fill or market resolution | Q3 2026 |
+| **v0.6** — Limit orders & advanced order types | Q3 2026 |
+| **v1.0** — Multi-chain support (Polygon, Base, Arbitrum) + opBNB L2 | Q4 2026 |
+| **v1.x** — Mobile companion app (iOS / Android) | 2027 |
 
 ---
 
