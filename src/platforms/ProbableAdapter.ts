@@ -353,7 +353,7 @@ export class ProbableAdapter implements PredictionPlatform {
         side,
         makerAmount:   makerAmount.toString(),
         takerAmount:   takerAmount.toString(),
-        feeRateBps:    '0',  // 0 matches the working clob-examples reference implementation
+        feeRateBps:    '175', // min allowed; must match signed EIP-712 value
         nonce:         '0',
         signatureType: 1,    // PROB_GNOSIS_SAFE — proxy wallet is maker, EOA is signer
         taker:         '0x0000000000000000000000000000000000000000',
