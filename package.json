@@ -13,7 +13,11 @@
     "format": "prettier --write 'src/**/*.{ts,tsx,css}'",
     "bot": "tsx bot/bot.ts",
     "bot:dry": "tsx bot/bot.ts --dry-run",
-    "bot:mock": "tsx bot/bot.ts --mock --dry-run"
+    "bot:mock": "tsx bot/bot.ts --mock --dry-run",
+    "reply-bot": "tsx bot/reply-bot.ts",
+    "reply-bot:dry": "tsx bot/reply-bot.ts --dry",
+    "reply-bot:mock": "tsx bot/reply-bot.ts --mock",
+    "reply-bot:once": "tsx bot/reply-bot.ts --once"
   },
   "dependencies": {
     "ethers": "^6.13.4",
